@@ -42,6 +42,7 @@ import { accumulateUsage } from "#tracing/core/usage.js";
 import { snapshotRecord } from "#tracing/core/snapshot.js";
 import { boundedSerializer } from "#tracing/core/serializer.js";
 import { withoutDeclinedContent } from "#tracing/core/content-policy.js";
+import { runTraceContext } from "#tracing/core/context.js";
 export { scopeRuntime } from "#tracing/core/topology.js";
 
 export type { ScopeIdentity, TurnMetadata } from "#tracing/core/scope-lifecycle.js";
@@ -330,22 +331,14 @@ export function createTraceLifecycle(input: {
         const permitted = withoutDeclinedContent(enrichment, actualCapture) ?? enrichment;
         for (const key of Object.keys(enrichment)) if (!(key in permitted)) delete enrichment[key];
         record = { ...record!, data: actualData, capture: actualCapture };
-        let entered = false;
-        try {
-          return input.backend.run(
-            retainedReference,
-            actualCapture,
-            () => {
-              entered = true;
-              return execute();
-            },
-            binding?.executionContext,
-            runtime,
-          );
-        } catch (error) {
-          if (entered) throw error;
-          return execute();
-        }
+        return runTraceContext(
+          backend,
+          retainedReference,
+          actualCapture,
+          execute,
+          binding?.executionContext,
+          runtime,
+        );
       },
       async finish(result = {}) {
         if (finished) return;
@@ -611,7 +604,8 @@ export function createTraceLifecycle(input: {
       executionContext?: import("#tracing/core/types.js").ExecutionContext,
     ) {
       const active = backend.active?.();
-      return backend.run(
+      return runTraceContext(
+        backend,
         reference,
         capture,
         execute,

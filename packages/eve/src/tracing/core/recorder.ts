@@ -7,6 +7,9 @@ import type {
 } from "#tracing/core/scopes.js";
 import type { CaptureDecision, TraceBackend, DurableTraceBackend } from "#tracing/core/types.js";
 import type { ContentSerializer } from "#tracing/core/model.js";
+import type { ExecutionContext, TraceReference } from "#tracing/core/types.js";
+import type { ToolCallInput } from "#tracing/core/pending-tool.js";
+import { validSnapshot } from "#tracing/core/snapshot.js";
 import {
   operationHandle,
   type TurnOperation,
@@ -17,13 +20,84 @@ export function createTraceRecorder(input: {
   output: TraceBackend | DurableTraceBackend;
   serializer: ContentSerializer;
   mode: "live" | "durable";
+  diagnostic?: (code: string) => void;
 }) {
   const runtime = createTraceLifecycle({
     backend: input.output,
     serializer: input.serializer,
     mode: input.mode,
+    diagnostic: input.diagnostic,
   });
+  const tools = new Map<
+    string,
+    { actionKey: string; group: string; operation: ReturnType<typeof runtime.toolCall> }
+  >();
+  const report = () => {
+    try {
+      input.diagnostic?.("agent.tracing.operation.failed");
+    } catch {}
+  };
   return {
+    active: runtime.active,
+    run: runtime.run,
+    reserve: runtime.reserve,
+    sample: runtime.sample,
+    async resolve<K extends ScopeRecord["data"]["type"]>(
+      record: ScopeRecord & { data: { type: K } },
+      options: { deferred?: boolean; executionContext?: ExecutionContext } = {},
+    ): Promise<Extract<RestoredOperation, { type: K }> | undefined> {
+      try {
+        if (!validSnapshot(record, false)) {
+          report();
+          return undefined;
+        }
+        return operationHandle(await runtime.resolve(record, options)) as Extract<
+          RestoredOperation,
+          { type: K }
+        >;
+      } catch {
+        report();
+        return undefined;
+      }
+    },
+    toolCall(input: ToolCallInput & { group: string }) {
+      const previous = tools.get(input.executionKey);
+      if (previous !== undefined) return previous.operation;
+      const operation = runtime.toolCall(input);
+      tools.set(input.executionKey, { actionKey: input.actionKey, group: input.group, operation });
+      return operation;
+    },
+    toolExecution(key: string) {
+      return tools.get(key)?.operation;
+    },
+    async actionAvailable(
+      key: string,
+      parent: TraceReference,
+      executionContext?: ExecutionContext,
+    ) {
+      for (const [keyId, tool] of tools)
+        if (tool.actionKey === key) {
+          await tool.operation.attach(parent, executionContext);
+          if (tool.operation.finished) tools.delete(keyId);
+        }
+    },
+    async completeTool(key: string, result: import("#tracing/core/scopes.js").ToolResult) {
+      const tool = tools.get(key);
+      if (tool === undefined) return;
+      await tool.operation.finish({
+        ...result,
+        failed: result.outcome === "failed",
+        errorCode: "errorType" in result ? result.errorType : undefined,
+      });
+      if (tool.operation.finished) tools.delete(key);
+    },
+    async endAttempt(group: string, failure?: { error: unknown }) {
+      for (const [key, tool] of tools)
+        if (tool.group === group) {
+          await tool.operation.drain({ failed: failure !== undefined, error: failure?.error });
+          tools.delete(key);
+        }
+    },
     async beginTurn(input: {
       identity: ScopeIdentity;
       metadata: TurnMetadata;
@@ -34,8 +108,20 @@ export function createTraceRecorder(input: {
         await runtime.turn(input.identity, input.metadata, input.capture, input.binding),
       ) as TurnOperation;
     },
-    async restore(snapshot: ScopeRecord, ceiling: CaptureDecision): Promise<RestoredOperation> {
-      return operationHandle(await runtime.restore(snapshot, ceiling));
+    async restore(
+      snapshot: unknown,
+      ceiling: CaptureDecision,
+    ): Promise<RestoredOperation | undefined> {
+      try {
+        if (!validSnapshot(snapshot)) {
+          report();
+          return undefined;
+        }
+        return operationHandle(await runtime.restore(snapshot, ceiling));
+      } catch {
+        report();
+        return undefined;
+      }
     },
   };
 }

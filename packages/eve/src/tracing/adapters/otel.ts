@@ -115,6 +115,9 @@ export function liveOtelBackend(tracer: Tracer, mapping?: OutputMapping): TraceB
       return active === undefined ? undefined : portableReference(active);
     },
     active: () => activeTraceOperation(),
+    suppressed<T>(execute: () => T): T {
+      return context.with(withErrorContent(suppressTracing(ROOT_CONTEXT), false), execute);
+    },
     run(reference, capture, execute, executionContext, operation) {
       capture = intersectCapture(capture, activeTraceOperation()?.capture);
       // Retain baggage and host context while replacing the semantic parent span.

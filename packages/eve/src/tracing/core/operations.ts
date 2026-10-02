@@ -18,6 +18,8 @@ type TurnCompletion =
 export interface Operation<K extends ScopeRecord["data"]["type"], R> {
   readonly type: K;
   readonly reference: RuntimeScope["reference"];
+  readonly finished: boolean;
+  readonly capture: CaptureDecision;
   snapshot(): ScopeRecord;
   run<T>(execute: () => T, ceiling?: CaptureDecision): T;
   complete(result: R): Promise<void>;
@@ -29,6 +31,7 @@ export interface AttemptOperation extends Operation<
   "step",
   { outcome: "completed" | "cancelled" } | Failure
 > {
+  cost(input: import("#tracing/core/scope-lifecycle.js").ScopeCost): void;
   modelCall(input: ModelOptions, key: string): Promise<ModelOperation>;
   action(input: ActionOptions, key: string): Promise<ActionOperation>;
 }
@@ -67,22 +70,36 @@ export type RestoredOperation =
   | ApprovalOperation
   | MemoryOperation;
 
+export type Completion = (
+  | TurnCompletion
+  | ActionResult
+  | { outcome: "abandoned" | "approved" | "denied" | "ignored" | "invalid"; response?: unknown }
+  | {
+      outcome: "completed";
+      result?: ModelResult;
+      output?: unknown;
+      recordCount?: number;
+      records?: readonly { id?: string; content: string }[];
+    }
+) & { endTimeMs?: number; usage?: ScopeTerminal["usage"] };
+
 export function operationHandle(runtime: RuntimeScope): RestoredOperation {
   const common = {
     reference: runtime.reference,
+    get finished() {
+      return runtime.finished;
+    },
+    get capture() {
+      return runtime.capture;
+    },
     snapshot: () => runtime.snapshot(),
     run: <T>(execute: () => T, ceiling?: CaptureDecision) => runtime.run(execute, ceiling),
-    complete: async (result: {
-      outcome: string;
-      errorType?: string;
-      error?: unknown;
-      result?: ModelResult;
-    }) => {
+    complete: async (result: Completion) => {
       await runtime.finish({
         ...result,
-        model: result.result,
+        model: "result" in result ? result.result : undefined,
         failed: result.outcome === "failed",
-        errorCode: result.errorType,
+        errorCode: "errorType" in result ? result.errorType : undefined,
       });
     },
   };
@@ -98,6 +115,7 @@ export function operationHandle(runtime: RuntimeScope): RestoredOperation {
       return {
         ...common,
         type: "step",
+        cost: (input) => runtime.cost(input),
         modelCall: async (options, key) =>
           operationHandle(await runtime.model(options, { key })) as ModelOperation,
         action: async (options, key) =>

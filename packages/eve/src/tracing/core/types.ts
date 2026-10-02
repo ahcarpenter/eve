@@ -73,6 +73,7 @@ export interface TraceBackend {
   ): T;
   current(): TraceReference | undefined;
   active?(): ActiveOperation | undefined;
+  suppressed?<T>(execute: () => T): T;
 }
 
 export interface ActiveOperation {

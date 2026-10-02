@@ -18,6 +18,7 @@ import { mcpLifecycle } from "#tracing/core/mcp.js";
 import type { ContentSerializer } from "#tracing/core/model.js";
 import type { ActiveOperation } from "#tracing/core/types.js";
 import { intersectCapture } from "#tracing/core/activation.js";
+import { runTraceContext } from "#tracing/core/context.js";
 
 export function createTransportLifecycle(backend: TraceBackend, serializer: ContentSerializer) {
   const engine = createTraceEngine({ backend });
@@ -45,7 +46,8 @@ export function createTransportLifecycle(backend: TraceBackend, serializer: Cont
       return {
         reference: operation.reference,
         run<T>(execute: () => T) {
-          return backend.run(
+          return runTraceContext(
+            backend,
             operation.reference,
             operation.capture,
             execute,
@@ -104,7 +106,8 @@ export function createTransportLifecycle(backend: TraceBackend, serializer: Cont
       return {
         reference: operation.reference,
         run<T>(execute: () => T) {
-          return backend.run(
+          return runTraceContext(
+            backend,
             operation.reference,
             input.capture,
             execute,

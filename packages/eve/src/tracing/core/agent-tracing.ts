@@ -8,6 +8,7 @@ import type {
   TraceReference,
 } from "#tracing/core/types.js";
 import { createTransportLifecycle } from "#tracing/core/transports.js";
+import { disabledTurn } from "#tracing/core/disabled.js";
 
 export interface TracingAdapter<TMcp = unknown> {
   readonly backend: TraceBackend;
@@ -83,24 +84,29 @@ export function createTracingRuntime<TMcp = unknown>(input: {
         links.push({ context: turn.caller, relationship: "agent.dispatch" });
       if (turn.request !== undefined)
         links.push({ context: turn.request, relationship: "channel.request" });
-      const scope = await runtime.turn(
-        {
-          ...turn,
-          agentName: input.agentName,
-          framework: input.framework ?? { name: "custom", version: "" },
-        },
-        {
-          ...turn.activation,
-          sequence: turn.sequence,
-          subagent: turn.caller !== undefined,
-        },
-        {
-          emit: turn.caller === undefined || (turn.caller.traceFlags & 1) !== 0,
-          recordInputs: input.content?.recordInputs ?? false,
-          recordOutputs: input.content?.recordOutputs ?? false,
-        },
-        { key: JSON.stringify([turn.runId, turn.turnId]), links },
-      );
+      let scope;
+      try {
+        scope = await runtime.turn(
+          {
+            ...turn,
+            agentName: input.agentName,
+            framework: input.framework ?? { name: "custom", version: "" },
+          },
+          {
+            ...turn.activation,
+            sequence: turn.sequence,
+            subagent: turn.caller !== undefined,
+          },
+          {
+            emit: turn.caller === undefined || (turn.caller.traceFlags & 1) !== 0,
+            recordInputs: input.content?.recordInputs ?? false,
+            recordOutputs: input.content?.recordOutputs ?? false,
+          },
+          { key: JSON.stringify([turn.runId, turn.turnId]), links },
+        );
+      } catch {
+        return execute(disabledTurn());
+      }
       try {
         await scope.started();
         const result = await scope.run(() => execute(scope.authoring as TurnScope));
