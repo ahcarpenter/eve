@@ -1,24 +1,11 @@
 import { createTraceLifecycle } from "#tracing/lib/core/scopes.js";
-import type {
-  ScopeRecord,
-  ScopeIdentity,
-  TurnMetadata,
-  RuntimeBinding,
-} from "#tracing/lib/core/scopes.js";
-import type {
-  CaptureDecision,
-  TraceBackend,
-  DurableTraceBackend,
-} from "#tracing/lib/core/types.js";
+import type { ScopeRecord } from "#tracing/lib/core/scopes.js";
+import type { TraceBackend, DurableTraceBackend } from "#tracing/lib/core/types.js";
 import type { ContentSerializer } from "#tracing/lib/core/model.js";
 import type { ExecutionContext, TraceReference } from "#tracing/lib/core/types.js";
 import type { ToolCallInput } from "#tracing/lib/core/pending-tool.js";
 import { validSnapshot } from "#tracing/lib/core/snapshot.js";
-import {
-  operationHandle,
-  type TurnOperation,
-  type RestoredOperation,
-} from "#tracing/lib/core/operations.js";
+import { operationHandle, type RestoredOperation } from "#tracing/lib/core/operations.js";
 
 export function createTraceRecorder(input: {
   output: TraceBackend | DurableTraceBackend;
@@ -124,36 +111,6 @@ export function createTraceRecorder(input: {
             tools.delete(key);
           }
         }
-    },
-    async beginTurn(input: {
-      identity: ScopeIdentity;
-      metadata: TurnMetadata;
-      capture: CaptureDecision;
-      binding: RuntimeBinding;
-    }): Promise<TurnOperation | undefined> {
-      try {
-        return operationHandle(
-          await runtime.turn(input.identity, input.metadata, input.capture, input.binding),
-        ) as TurnOperation;
-      } catch {
-        report();
-        return undefined;
-      }
-    },
-    async restore(
-      snapshot: unknown,
-      ceiling: CaptureDecision,
-    ): Promise<RestoredOperation | undefined> {
-      try {
-        if (!validSnapshot(snapshot)) {
-          report();
-          return undefined;
-        }
-        return operationHandle(await runtime.restore(snapshot, ceiling));
-      } catch {
-        report();
-        return undefined;
-      }
     },
   };
 }

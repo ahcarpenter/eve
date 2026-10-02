@@ -34,7 +34,6 @@ import {
   completeScope,
   capturedScopeData as capturedData,
 } from "#tracing/lib/core/scope-completion.js";
-import { topologyScope } from "#tracing/lib/core/topology.js";
 import { mcpLifecycle } from "#tracing/lib/core/mcp.js";
 import { intersectCapture } from "#tracing/lib/core/activation.js";
 import { pendingTool, toolCallRecord, type ToolCallInput } from "#tracing/lib/core/pending-tool.js";
@@ -44,7 +43,6 @@ import { boundedSerializer } from "#tracing/lib/core/serializer.js";
 import { withoutDeclinedContent } from "#tracing/lib/core/content-policy.js";
 import { runTraceContext } from "#tracing/lib/core/context.js";
 import { reservation } from "#tracing/lib/core/reservation.js";
-export { scopeRuntime } from "#tracing/lib/core/topology.js";
 
 export type {
   StepOptions,
@@ -54,15 +52,7 @@ export type {
   MemoryOptions,
 } from "#tracing/lib/core/scope-lifecycle.js";
 export type ModelResult = Parameters<typeof modelResultAttributes>[0];
-export type { MemoryResult } from "#tracing/lib/core/scope-lifecycle.js";
-export type {
-  TurnScope,
-  StepScope,
-  ActionScope,
-  ActionResult,
-  ToolResult,
-} from "#tracing/lib/core/application.js";
-import type { TurnScope, StepScope, ActionScope } from "#tracing/lib/core/application.js";
+export type { ActionResult, ToolResult } from "#tracing/lib/core/operations.js";
 
 export type {
   ScopeIdentity,
@@ -75,7 +65,6 @@ export type {
 } from "#tracing/lib/core/scope-lifecycle.js";
 import type {
   ScopeIdentity,
-  TurnMetadata,
   ScopeData,
   ScopeRecord,
   RuntimeBinding,
@@ -116,7 +105,6 @@ export function createTraceLifecycle(input: {
     ) {
       throw new Error("The persisted trace scope does not match the operation identity.");
     }
-    let record = saved;
     const startTimeMs = saved?.startTimeMs ?? binding?.startTimeMs ?? Date.now();
     const parentReference = saved?.parent ?? parent?.reference ?? binding?.parent;
     const actualIdentity = saved?.identity ?? identity;
@@ -196,47 +184,22 @@ export function createTraceLifecycle(input: {
         actualCapture.emit && (reference.traceFlags & 1) !== 0 && actualCapture.recordOutputs,
     };
     actualData = capturedData(actualData, actualCapture);
-    record ??= {
-      key,
-      identity: actualIdentity,
-      data: capturedData(actualData, actualCapture),
-      capture: actualCapture,
-      reference: retainedReference,
-      parent: parentReference,
-      attempt: actualAttempt,
-      startTimeMs,
-      links,
-      outputContext: binding?.outputContext,
-      content,
-    };
-    record = { ...record, data: actualData, capture: actualCapture };
     let finished = false;
     let started = false;
     const children = new Set<RuntimeScope>();
     let totalInput = saved?.usage?.inputTokens;
     let totalOutput = saved?.usage?.outputTokens;
     const usageKeys = new Set(saved?.usageKeys ?? []);
-    let stepIndex = saved?.stepIndex ?? 0;
-    let childIndex = saved?.childIndex ?? 0;
     let pendingError: { error?: unknown; errorType?: string } | undefined;
     const enrichment: Record<string, Attributes[string]> = {};
-    let authoring: TurnScope | StepScope | ActionScope;
     function requireParent(types: readonly ScopeData["type"][]): void {
       if (finished || !types.includes(actualData.type))
         throw new Error("The operation is not permitted in this trace scope.");
     }
     async function child(
       childData: ScopeData,
-      childBinding?: RuntimeBinding,
+      childBinding: RuntimeBinding,
     ): Promise<RuntimeScope> {
-      if (childData.type === "step" && actualData.type === "activation")
-        childData = {
-          ...childData,
-          options: {
-            ...childData.options,
-            channel: childData.options.channel ?? actualData.options.channel,
-          },
-        };
       if (children.size >= scopeLimit) {
         for (const previous of children) if (previous.finished) children.delete(previous);
         if (children.size >= scopeLimit)
@@ -247,11 +210,10 @@ export function createTraceLifecycle(input: {
           ? { index: childData.options.index, attempt: childData.options.attempt ?? 0 }
           : actualAttempt;
       const next = await construct(actualIdentity, actualCapture, childData, runtime, nextAttempt, {
-        ...(childBinding ?? { key: JSON.stringify([key, childData.type, childIndex++]) }),
-        outputContext:
-          childBinding?.outputContext ?? record?.outputContext ?? binding?.outputContext,
+        ...childBinding,
+        key: childBinding.key,
+        outputContext: childBinding?.outputContext ?? binding?.outputContext,
       });
-      record = { ...record!, childIndex, stepIndex };
       if (childData.type === "model")
         runtime.modelSelected(childData.options.modelId, childData.options.provider);
       children.add(next);
@@ -260,25 +222,8 @@ export function createTraceLifecycle(input: {
     const runtime: RuntimeScope = {
       type: actualData.type,
       reference: retainedReference,
-      get authoring() {
-        return authoring;
-      },
       get capture() {
         return actualCapture;
-      },
-      snapshot() {
-        return snapshotRecord(
-          {
-            ...record!,
-            data: actualData,
-            capture: actualCapture,
-            usage: { inputTokens: totalInput, outputTokens: totalOutput },
-            childIndex,
-            stepIndex,
-            usageKeys: [...usageKeys],
-          },
-          input.serializer,
-        );
       },
       mcp: mcpLifecycle({
         serializer: input.serializer,
@@ -296,51 +241,9 @@ export function createTraceLifecycle(input: {
       get finished() {
         return finished;
       },
-      step(options, childBinding) {
-        requireParent(["activation"]);
-        return child({ type: "step", options }, childBinding);
-      },
       model(options, childBinding) {
         requireParent(["step"]);
         return child({ type: "model", options }, childBinding);
-      },
-      action(options, childBinding) {
-        requireParent(["step"]);
-        return child({ type: "action", options }, childBinding);
-      },
-      tool(childBinding) {
-        requireParent(["action"]);
-        if (actualData.type !== "action") throw new Error("A tool requires an action scope.");
-        return child(
-          {
-            type: "tool",
-            options: {
-              callId: actualData.options.callId,
-              name: actualData.options.name,
-              arguments: actualData.options.arguments,
-            },
-          },
-          childBinding,
-        );
-      },
-      approval(options, childBinding) {
-        requireParent(["action"]);
-        if (actualData.type !== "action") throw new Error("An approval requires an action scope.");
-        return child(
-          {
-            type: "approval",
-            options: {
-              ...options,
-              callId: actualData.options.callId,
-              actionName: actualData.options.name,
-            },
-          },
-          childBinding,
-        );
-      },
-      memory(options, childBinding) {
-        requireParent(["activation", "step", "action", "tool"]);
-        return child({ type: "memory", options }, childBinding);
       },
       run(execute, ceiling) {
         if (finished) throw new Error("The trace scope has already finished.");
@@ -358,7 +261,6 @@ export function createTraceLifecycle(input: {
         };
         const permitted = withoutDeclinedContent(enrichment, actualCapture) ?? enrichment;
         for (const key of Object.keys(enrichment)) if (!(key in permitted)) delete enrichment[key];
-        record = { ...record!, data: actualData, capture: actualCapture };
         return runTraceContext(
           backend,
           retainedReference,
@@ -371,7 +273,7 @@ export function createTraceLifecycle(input: {
       async finish(result = {}) {
         if (finished) return;
         finished = true;
-        // Deferred children belong to the runtime scheduler, not this callback lifetime.
+        // Deferred children belong to the runtime scheduler, not the parent lifetime.
         for (const next of children)
           if (!next.finished && !deferred)
             await next.finish({ failed: result.failed, error: result.error, outcome: "abandoned" });
@@ -411,17 +313,6 @@ export function createTraceLifecycle(input: {
         if (operation !== undefined && actualData.type === "step")
           operation.addEvent("step.started", undefined, startTimeMs);
       },
-      completed(result = {}) {
-        return runtime.finish({ ...result, failed: false });
-      },
-      failed(error) {
-        return runtime.finish({ failed: true, error, outcome: "failed" });
-      },
-      abandon() {
-        if (finished) return;
-        finished = true;
-        operation?.end();
-      },
       async usage(usage, callKey) {
         if (callKey !== undefined && usageKeys.has(callKey)) return;
         if (callKey !== undefined) usageKeys.add(callKey);
@@ -432,11 +323,7 @@ export function createTraceLifecycle(input: {
         );
         totalInput = total.inputTokens;
         totalOutput = total.outputTokens;
-        record = { ...record!, usage: { inputTokens: totalInput, outputTokens: totalOutput } };
         await parent?.usage(usage, callKey);
-      },
-      nextStep() {
-        return stepIndex++;
       },
       modelSelected(modelId, provider) {
         if (operation !== undefined)
@@ -456,7 +343,6 @@ export function createTraceLifecycle(input: {
         if (operation !== undefined) operation.fail(pendingError.error, pendingError.errorType);
       },
     };
-    authoring = topologyScope(runtime);
     await runtime.started();
     return runtime;
   }
@@ -661,38 +547,6 @@ export function createTraceLifecycle(input: {
         content: record.content,
         deferred: options.deferred,
         executionContext: options.executionContext,
-      });
-    },
-    turn(
-      identity: ScopeIdentity,
-      options: TurnMetadata,
-      capture: CaptureDecision,
-      binding?: RuntimeBinding,
-    ) {
-      return construct(
-        identity,
-        capture,
-        { type: "activation", options },
-        undefined,
-        undefined,
-        binding,
-      );
-    },
-    bind(
-      identity: ScopeIdentity,
-      data: ScopeData,
-      capture: CaptureDecision,
-      binding: RuntimeBinding,
-      attempt?: ScopeRecord["attempt"],
-    ) {
-      return construct(identity, capture, data, undefined, attempt, binding);
-    },
-    async restore(record: ScopeRecord, capture: CaptureDecision): Promise<RuntimeScope> {
-      return construct(record.identity, capture, record.data, undefined, record.attempt, {
-        key: record.key,
-        snapshot: record,
-        deferred: true,
-        parent: record.parent,
       });
     },
   };

@@ -23,6 +23,7 @@ import { runTraceContext } from "#tracing/lib/core/context.js";
 export function createTransportLifecycle(backend: TraceBackend, serializer: ContentSerializer) {
   const engine = createTraceEngine({ backend });
   return {
+    active: () => backend.active?.(),
     request(input: {
       method: string;
       route: string;

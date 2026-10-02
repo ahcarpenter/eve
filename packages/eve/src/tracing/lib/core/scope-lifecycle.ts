@@ -4,7 +4,7 @@ import type {
   TraceLink,
   Usage,
 } from "#tracing/lib/core/types.js";
-import type { ModelResult, TurnScope, StepScope, ActionScope } from "#tracing/lib/core/scopes.js";
+import type { ModelResult } from "#tracing/lib/core/scopes.js";
 import type { CaptureDecision } from "#tracing/lib/core/types.js";
 import type { McpLifecycle } from "#tracing/lib/core/mcp.js";
 import type { RunIdentity, FrameworkIdentity } from "#tracing/lib/core/types.js";
@@ -33,7 +33,7 @@ export interface ScopeIdentity extends RunIdentity {
   readonly framework: FrameworkIdentity;
 }
 
-/** Runtime-owned state. Authoring scopes never expose a checkpoint or raw span. */
+/** Detached state persisted by the runtime with its workflow checkpoint. */
 export interface ScopeRecord {
   readonly version?: 1;
   readonly key: string;
@@ -48,32 +48,20 @@ export interface ScopeRecord {
   readonly usage?: { readonly inputTokens?: number; readonly outputTokens?: number };
   readonly usageKeys?: readonly string[];
   readonly childIndex?: number;
-  readonly stepIndex?: number;
   readonly outputContext?: Readonly<Record<string, string>>;
   readonly content?: { readonly recordInputs: boolean; readonly recordOutputs: boolean };
 }
 
 export interface RuntimeScope {
-  snapshot(): ScopeRecord;
   readonly type: ScopeData["type"];
   readonly reference: TraceReference;
   readonly finished: boolean;
   readonly capture: CaptureDecision;
-  readonly authoring: TurnScope | StepScope | ActionScope;
-  step(options: StepOptions, binding?: RuntimeBinding): Promise<RuntimeScope>;
-  model(options: ModelOptions, binding?: RuntimeBinding): Promise<RuntimeScope>;
-  action(options: ActionOptions, binding?: RuntimeBinding): Promise<RuntimeScope>;
-  tool(binding?: RuntimeBinding): Promise<RuntimeScope>;
-  approval(options: ApprovalOptions, binding?: RuntimeBinding): Promise<RuntimeScope>;
-  memory(options: MemoryOptions, binding?: RuntimeBinding): Promise<RuntimeScope>;
+  model(options: ModelOptions, binding: RuntimeBinding): Promise<RuntimeScope>;
   run<T>(execute: () => T, ceiling?: CaptureDecision): T;
   finish(result?: ScopeTerminal): Promise<void>;
   started(): Promise<void>;
-  completed(result?: ScopeTerminal): Promise<void>;
-  failed(error: unknown): Promise<void>;
-  abandon(): void;
   usage(usage: Usage, callKey?: string): Promise<void>;
-  nextStep(): number;
   modelSelected(modelId: string, provider: string): void;
   error(error?: unknown, errorType?: string): void;
   cost(cost: ScopeCost): void;
@@ -134,12 +122,6 @@ export interface MemoryOptions {
   readonly phase: string;
   readonly slot: string;
   readonly storeId: string;
-}
-
-export interface MemoryResult<T> {
-  readonly value: T;
-  readonly recordCount?: number;
-  readonly records?: readonly { id?: string; content: string }[];
 }
 
 export interface ScopeCost {

@@ -2,14 +2,14 @@ import type {
   RuntimeScope,
   ScopeRecord,
   ScopeTerminal,
-  ActionOptions,
   ModelOptions,
-  ApprovalOptions,
-  StepOptions,
   ModelResult,
 } from "#tracing/lib/core/scopes.js";
 import type { CaptureDecision } from "#tracing/lib/core/types.js";
-import type { ActionResult, ToolResult } from "#tracing/lib/core/scopes.js";
+export type ToolResult =
+  | { outcome: "completed"; output?: unknown }
+  | { outcome: "failed"; errorType: string; error?: unknown };
+export type ActionResult = ToolResult | { outcome: "rejected" | "cancelled" };
 
 type Failure = {
   outcome: "failed";
@@ -26,28 +26,21 @@ export interface Operation<K extends ScopeRecord["data"]["type"], R> {
   readonly reference: RuntimeScope["reference"];
   readonly finished: boolean;
   readonly capture: CaptureDecision;
-  snapshot(): ScopeRecord;
   run<T>(execute: () => T, ceiling?: CaptureDecision): T;
   complete(result: R): Promise<void>;
 }
-export interface TurnOperation extends Operation<"activation", TurnCompletion> {
-  attempt(input: StepOptions, key: string): Promise<AttemptOperation>;
-}
+export type TurnOperation = Operation<"activation", TurnCompletion>;
 export interface AttemptOperation extends Operation<
   "step",
   { outcome: "completed" | "cancelled" } | Failure
 > {
   cost(input: import("#tracing/lib/core/scope-lifecycle.js").ScopeCost): void;
   modelCall(input: ModelOptions, key: string): Promise<ModelOperation>;
-  action(input: ActionOptions, key: string): Promise<ActionOperation>;
 }
 export interface ActionOperation extends Operation<
   "action",
   (ActionResult | { outcome: "abandoned" }) & { usage?: ScopeTerminal["usage"]; endTimeMs?: number }
-> {
-  approval(input: ApprovalOptions, key: string): Promise<ApprovalOperation>;
-  toolExecution(input: { executionId: string }): Promise<ToolOperation>;
-}
+> {}
 export type ModelOperation = Operation<
   "model",
   { outcome: "completed"; result: ModelResult } | Failure
@@ -98,7 +91,6 @@ export function operationHandle(runtime: RuntimeScope): RestoredOperation {
     get capture() {
       return runtime.capture;
     },
-    snapshot: () => runtime.snapshot(),
     run: <T>(execute: () => T, ceiling?: CaptureDecision) => runtime.run(execute, ceiling),
     complete: async (result: Completion) => {
       try {
@@ -116,8 +108,6 @@ export function operationHandle(runtime: RuntimeScope): RestoredOperation {
       return {
         ...common,
         type: "activation",
-        attempt: async (options, key) =>
-          operationHandle(await runtime.step(options, { key })) as AttemptOperation,
       };
     case "step":
       return {
@@ -126,17 +116,11 @@ export function operationHandle(runtime: RuntimeScope): RestoredOperation {
         cost: (input) => runtime.cost(input),
         modelCall: async (options, key) =>
           operationHandle(await runtime.model(options, { key })) as ModelOperation,
-        action: async (options, key) =>
-          operationHandle(await runtime.action(options, { key })) as ActionOperation,
       };
     case "action":
       return {
         ...common,
         type: "action",
-        approval: async (options, key) =>
-          operationHandle(await runtime.approval(options, { key })) as ApprovalOperation,
-        toolExecution: async (input) =>
-          operationHandle(await runtime.tool({ key: input.executionId })) as ToolOperation,
       };
     case "model":
       return { ...common, type: "model" };
