@@ -37,7 +37,6 @@ interface AgentMemoryInstrumentation {
 
 export function createAgentMemoryInstrumentation(input: {
   readonly lifecycle: ReturnType<typeof createTraceRecorder>;
-  readonly idGenerator: import("#tracing/lib/adapters/otel-ids.js").AgentSpanIdGenerator;
   readonly environment: ConversationEnvironment;
   readonly recordOutputs?: boolean;
   readonly stateStore: AgentTraceStateStore;
@@ -68,7 +67,6 @@ export function createAgentMemoryInstrumentation(input: {
     const parent = await parentContext(event);
     const parentSpan = parent === undefined ? undefined : trace.getSpan(parent)?.spanContext();
     if (parent === undefined || parentSpan === undefined || !isSampledTrace(parentSpan)) return;
-    const reference = { ...parentSpan, spanId: input.idGenerator.allocateSpanId() };
     const runtime = await input.lifecycle.memory({
       ...eveOperationInput(
         {
@@ -76,7 +74,6 @@ export function createAgentMemoryInstrumentation(input: {
           turnId: event.turnId ?? "",
           frameworkVersion: "",
           parent: parentSpan,
-          reference,
         },
         event.idempotencyKey,
         false,

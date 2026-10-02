@@ -109,7 +109,11 @@ export function createEveSessionTracing(input: EveSessionTracingInput): EveSessi
     const caller = useInitialContext ? event.parentTraceContext : undefined;
     let turnContext = useInitialContext
       ? { ...session.context, isRemote: false }
-      : freshTurnContext(input, event.idempotencyKey, session.decision);
+      : input.lifecycle.turnReference(event.idempotencyKey, {
+          emit: session.decision?.action === "record",
+          recordInputs: false,
+          recordOutputs: false,
+        });
     const turn: AgentTurnTraceState = {
       caller: caller === undefined ? undefined : adoptedSpanContext(caller),
       context: turnContext,
@@ -273,21 +277,15 @@ function initialSessionContext(
       traceFlags: decision.action === "drop" ? 0 : handed.traceFlags,
     };
   }
-  return input.lifecycle.reserve({
-    key: `session:${event.sessionId}`,
-    traceFlags: decision.action === "record" ? 1 : 0,
-  });
-}
-
-function freshTurnContext(
-  input: EveSessionTracingInput,
-  idempotencyKey: string,
-  decision: AgentSessionTraceState["decision"],
-): SpanContext {
-  return input.lifecycle.reserve({
-    key: `turn:${idempotencyKey}`,
-    traceFlags: decision?.action === "record" ? 1 : 0,
-  });
+  return input.lifecycle.session(
+    {
+      conversationId: event.rootSessionId ?? event.sessionId,
+      runId: event.sessionId,
+      turnId: "",
+      framework: { name: "eve", version: input.frameworkVersion },
+    },
+    { emit: decision.action === "record", recordInputs: false, recordOutputs: false },
+  );
 }
 
 function resolveSessionTraceDecision(

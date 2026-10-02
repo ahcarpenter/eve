@@ -58,7 +58,9 @@ export function eveScopeRecord<K extends ScopeData["type"]>(
 }
 
 export function eveOperationInput(
-  input: Parameters<typeof eveScopeRecord>[0],
+  input: Omit<Parameters<typeof eveScopeRecord>[0], "reference"> & {
+    readonly reference?: TraceReference;
+  },
   key: string,
   deferred = false,
   executionContext?: import("#tracing/lib/core/types.js").ExecutionContext,
@@ -72,7 +74,7 @@ export function eveOperationInput(
       framework: { name: "eve", version: input.frameworkVersion },
     },
     capture: {
-      emit: (input.reference.traceFlags & 1) !== 0,
+      emit: ((input.reference ?? input.parent)?.traceFlags ?? 1) !== 0,
       recordInputs: true,
       recordOutputs: true,
     },

@@ -67,53 +67,46 @@ export function createAgentActionInstrumentation(input: {
     if (traceContext === undefined || !isSampledTrace(traceContext)) return;
 
     const existing = await input.stateStore.getAction(event.idempotencyKey);
-    const state: AgentActionTraceState = existing ?? {
-      attemptIndex: event.scope.attemptIndex,
-      callId: event.callId,
-      channelAudience: normalizeChannelAudience(event.scope.channelAudience),
-      inputAttribute: input.recordInputs ? contentAttribute(event.input) : undefined,
-      kind: event.kind,
-      name: event.name,
-      parent: {
-        ...input.lifecycle.reserve({
-          key: attemptIdempotencyKey(event.scope),
-          parent: traceContext,
-          traceFlags: traceContext.traceFlags,
-        }),
-      },
-      rootSessionId: event.scope.rootSessionId ?? event.scope.sessionId,
-      traceSessionId: traceSessionIdOf(event.scope),
-      sessionId: event.scope.sessionId,
-      spanId: input.lifecycle.reserve({
-        key: `action:${event.idempotencyKey}`,
-        parent: traceContext,
-        traceFlags: traceContext.traceFlags,
-      }).spanId,
-      startTimeMs: Date.now(),
-      stepIndex: event.scope.stepIndex,
-      turnId: event.scope.turnId,
-    };
-    await input.stateStore.setAction(event.idempotencyKey, state);
-    if (existing === undefined) {
+    let state = existing;
+    if (state === undefined) {
       const operation = await input.lifecycle.action({
+        executionKey: event.idempotencyKey,
+        attemptKey: attemptIdempotencyKey(event.scope),
         ...eveOperationInput(
           {
-            ...state,
+            ...event.scope,
             frameworkVersion: input.frameworkVersion,
-            reference: { ...state.parent, spanId: state.spanId },
+            parent: traceContext,
           },
-          `${state.sessionId}:${state.callId}`,
+          `${event.scope.sessionId}:${event.callId}`,
           true,
-          contextFromActionState(state),
         ),
         action: {
-          callId: state.callId,
-          kind: state.kind,
-          name: state.name,
-          arguments: checkpointContent(state.inputAttribute),
+          callId: event.callId,
+          kind: event.kind,
+          name: event.name,
+          arguments: input.recordInputs ? event.input : undefined,
         },
       });
-      if (operation !== undefined) live.set(event.idempotencyKey, operation);
+      if (operation === undefined || operation.parent === undefined) return;
+      live.set(event.idempotencyKey, operation);
+      state = {
+        attemptIndex: event.scope.attemptIndex,
+        callId: event.callId,
+        channelAudience: normalizeChannelAudience(event.scope.channelAudience),
+        inputAttribute: input.recordInputs ? contentAttribute(event.input) : undefined,
+        kind: event.kind,
+        name: event.name,
+        parent: operation.parent,
+        rootSessionId: event.scope.rootSessionId ?? event.scope.sessionId,
+        traceSessionId: traceSessionIdOf(event.scope),
+        sessionId: event.scope.sessionId,
+        spanId: operation.reference.spanId,
+        startTimeMs: operation.startTimeMs,
+        stepIndex: event.scope.stepIndex,
+        turnId: event.scope.turnId,
+      };
+      await input.stateStore.setAction(event.idempotencyKey, state);
     }
     if (event.isWorkflowTool === true) {
       await input.stateStore.setActionAnchor(event.idempotencyKey, state);

@@ -13,11 +13,7 @@ import { decodeTraceSessionId } from "#tracing/eve/agent-trace-context-codec.js"
 import { withChannelAudience } from "#tracing/eve/channel-audience-context.js";
 import type { AgentActionContext } from "#tracing/eve/agent-action-instrumentation.js";
 import { normalizeChannelAudience, type ChannelAudience } from "#shared/channel-audience.js";
-import {
-  eveScopeRecord,
-  checkpointContent,
-  eveOperationInput,
-} from "#tracing/eve/checkpoint-codec.js";
+import { checkpointContent, eveOperationInput } from "#tracing/eve/checkpoint-codec.js";
 import type { ApprovalOperation } from "#tracing/lib/core/operations.js";
 import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
 
@@ -84,14 +80,12 @@ export function createAgentApprovalInstrumentation(input: {
     if (requestAttribute !== undefined) state["requestAttribute"] = requestAttribute;
     ctx.state.set(state);
     const saved = readState(state)!;
-    const reference = input.lifecycle.reserve({
-      key: `approval:${event.idempotencyKey}`,
-      parent: saved.parent,
-      traceFlags: saved.parent.traceFlags,
-    });
     const operation = await input.lifecycle.approval({
       ...eveOperationInput(
-        { ...saved, frameworkVersion: input.frameworkVersion, reference },
+        {
+          ...saved,
+          frameworkVersion: input.frameworkVersion,
+        },
         event.idempotencyKey,
         true,
         parent.context,
@@ -118,33 +112,23 @@ export function createAgentApprovalInstrumentation(input: {
     );
     const runtime =
       live.get(state.requestId) ??
-      (await input.lifecycle.resolve(
-        eveScopeRecord(
+      (await input.lifecycle.approval({
+        ...eveOperationInput(
           {
             ...state,
             frameworkVersion: input.frameworkVersion,
-            reference: {
-              ...state.parent,
-              spanId: input.lifecycle.reserve({
-                key: `approval:${event.idempotencyKey}`,
-                parent: state.parent,
-                traceFlags: state.parent.traceFlags,
-              }).spanId,
-            },
           },
           event.idempotencyKey,
-          {
-            type: "approval",
-            options: {
-              callId: state.actionCallId,
-              actionName: state.actionName,
-              requestId: state.requestId,
-              request: checkpointContent(state.requestAttribute),
-            },
-          },
+          true,
+          parent,
         ),
-        { deferred: true, executionContext: parent },
-      ));
+        approval: {
+          callId: state.actionCallId,
+          actionName: state.actionName,
+          requestId: state.requestId,
+          request: checkpointContent(state.requestAttribute),
+        },
+      }));
     await runtime?.complete(
       event.outcome === "failed"
         ? {

@@ -35,7 +35,6 @@ import type {
   InstrumentationSessionTransitionEvent,
   InstrumentationTurnStartedEvent,
 } from "#instrumentation/lifecycle.js";
-import { attemptIdempotencyKey } from "#instrumentation/lifecycle.js";
 import type { SamplingOperation as AgentSamplingOperation } from "#tracing/lib/adapters/otel-registration.js";
 import { resolveInstrumentationEnvironment } from "#internal/application/dev-environment.js";
 import type { ConversationEnvironment } from "#shared/conversation-context.js";
@@ -156,14 +155,6 @@ export function createAgentOtelInstrumentation(
           ...event.scope,
           frameworkVersion: input.frameworkVersion,
           parent: turn.context,
-          reference: {
-            ...turn.context,
-            spanId: lifecycle.reserve({
-              key: attemptIdempotencyKey(event.scope),
-              parent: turn.context,
-              traceFlags: turn.context.traceFlags,
-            }).spanId,
-          },
           links:
             activeSpanContext === undefined || activeSpanContext.traceId === turn.context.traceId
               ? undefined
