@@ -1,4 +1,5 @@
 import { trace } from "#compiled/@opentelemetry/api/index.js";
+import { randomUUID } from "node:crypto";
 import {
   registerOtelPipeline,
   type RegisteredOtelPipeline,
@@ -11,22 +12,22 @@ import { createTraceRecorder } from "#tracing/lib/core/recorder.js";
 import type { OutputMapping } from "#tracing/lib/core/types.js";
 
 let installed:
-  | { serviceName: string; configuration?: OtelConfiguration; runtime: RegisteredOtelPipeline }
+  | { agentName: string; configuration?: OtelConfiguration; runtime: RegisteredOtelPipeline }
   | undefined;
 
 /** Initialize once at application startup, before requests or instrumented work. */
 export function createAgentTracing(input: {
-  serviceName: string;
+  agentName: string;
   otel?: OtelConfiguration;
   mapping?: OutputMapping;
   diagnostic?: (code: string) => void;
 }) {
   if (
     installed !== undefined &&
-    (installed.serviceName !== input.serviceName || installed.configuration !== input.otel)
+    (installed.agentName !== input.agentName || installed.configuration !== input.otel)
   )
     throw new Error(
-      "Agent tracing already owns OpenTelemetry. Use the same service name and configuration for all agents in this process.",
+      "Agent tracing already owns OpenTelemetry. Use the same agent name and configuration for all instances in this process.",
     );
   if (installed === undefined) {
     const otel = input.otel ?? {
@@ -35,7 +36,7 @@ export function createAgentTracing(input: {
           ? ["auto" as const]
           : [vercelRuntimeSpanProcessor(input.diagnostic)],
     };
-    const registered = registerOtelPipeline({ serviceName: input.serviceName, otel });
+    const registered = registerOtelPipeline({ serviceName: input.agentName, otel });
     let shutdown: Promise<void> | undefined;
     const runtime = {
       ...registered,
@@ -46,7 +47,7 @@ export function createAgentTracing(input: {
         return shutdown;
       },
     };
-    installed = { serviceName: input.serviceName, configuration: input.otel, runtime };
+    installed = { agentName: input.agentName, configuration: input.otel, runtime };
   }
   const runtime = installed.runtime;
   const recorder = createTraceRecorder({
@@ -60,7 +61,27 @@ export function createAgentTracing(input: {
     mode: "live",
     diagnostic: input.diagnostic,
   });
-  return { ...recorder, ...runtime };
+  return {
+    ...recorder,
+    ...runtime,
+    turn(turn: {
+      identity: import("#tracing/lib/core/types.js").RunIdentity;
+      sequence: number;
+      framework?: import("#tracing/lib/core/types.js").FrameworkIdentity;
+      capture?: import("#tracing/lib/core/types.js").CaptureDecision;
+    }) {
+      return recorder.beginTurn({
+        identity: {
+          ...turn.identity,
+          agentName: input.agentName,
+          framework: turn.framework ?? { name: "custom", version: "" },
+        },
+        metadata: { sequence: turn.sequence },
+        capture: turn.capture ?? { emit: true, recordInputs: false, recordOutputs: false },
+        key: randomUUID(),
+      });
+    },
+  };
 }
 
 export type AgentTracing = ReturnType<typeof createAgentTracing>;

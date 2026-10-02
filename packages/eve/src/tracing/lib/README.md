@@ -1,159 +1,89 @@
 # Agent tracing
 
 Use this library to record agent execution as OpenTelemetry (OTel) spans.
-Each span describes one operation, its parent, its result, and its duration.
-The library records turns, attempts, model calls, actions, approvals, tools,
-memory operations, channel requests, and MCP calls.
+Each operation has a typed handle. The library supplies IDs, parent references,
+start times, sampling, and content serialization.
 
 ## Set up tracing
 
-Create tracing once, before the application accepts requests:
+Create tracing before the application accepts requests:
 
 ```ts
 import { createAgentTracing } from "./agent-tracing.js";
 
-const tracing = createAgentTracing({ serviceName: "support" });
+const tracing = createAgentTracing({ agentName: "support" });
 ```
 
-`serviceName` identifies the application in OTel. The factory registers the
-provider and sets up trace IDs, sampling, content serialization, and export.
+`agentName` identifies the agent on spans and sets the OTel service name.
 On Vercel, the default destination sends completed spans through the active
 request context. In other environments, OTel selects its automatic destination.
 
-To configure destinations, supply `otel`. For example, send spans to an exporter:
+To supply an exporter, configure `otel`:
 
 ```ts
 import { batchSpanProcessor } from "./adapters/batch-span-processor.js";
 
+const configuration = {
+  sampler: "always_on" as const,
+  spanProcessors: [batchSpanProcessor(exporter)],
+};
 const tracing = createAgentTracing({
-  serviceName: "support",
-  otel: {
-    resource: { "service.version": "1.0" },
-    sampler: "always_on",
-    spanProcessors: [batchSpanProcessor(exporter)],
-  },
+  agentName: "support",
+  otel: configuration,
 });
 ```
 
-Here, `exporter` is an OTel span exporter supplied by your application.
-The `otel` configuration supplies the complete destination list. It also accepts
+Here, `exporter` is your application's OTel span exporter. The configuration
+supplies the complete destination list. It also accepts resource attributes,
 propagators, instrumentations, and metric readers.
 
-Multiple tracing instances share registration when they use the same service
-name and configuration object. A different configuration causes an error.
-An existing provider registered by another component also causes an error.
+Tracing instances share registration for the same agent name and configuration
+object. A conflicting configuration or an existing external provider causes an
+error. Register tracing once at application startup.
 
-## Define operation identity
+## Record a turn
 
-A conversation can contain multiple runs. Each run can contain multiple turns.
-A turn contains attempts. An attempt contains model calls and actions.
-
-```text
-turn
-└── attempt
-    ├── model call
-    └── action
-        ├── approval
-        └── tool execution
-```
-
-Use application IDs for the conversation, run, and turn:
+Supply your application identity and turn sequence:
 
 ```ts
-const identity = {
-  conversationId: "conversation-123",
-  runId: "run-456",
-  turnId: "turn-789",
-  agentName: "support",
+const turn = await tracing.turn({
+  identity: {
+    conversationId: "conversation-123",
+    runId: "run-456",
+    turnId: "turn-789",
+  },
+  sequence: 0,
   framework: { name: "my-agent-runtime", version: "1.0" },
-};
+});
 
-const capture = {
-  emit: true,
-  recordInputs: false,
-  recordOutputs: false,
-};
-```
-
-`emit` permits span recording. `recordInputs` and `recordOutputs` permit content
-capture in each direction. Use the same capture decision for related operations.
-Nested execution can make these permissions more restrictive.
-
-Operation keys identify physical executions. Include the run ID, turn ID,
-operation type, and attempt number. Use a different key for each retry.
-Use the original key when reconstructing the same execution from stored state.
-
-## Record a turn and attempt
-
-First, reserve the turn reference. Then, resolve the turn record into a handle:
-
-```ts
-const turnKey = JSON.stringify([identity.runId, identity.turnId, "turn"]);
-const turnRecord = {
-  key: turnKey,
-  identity,
-  data: { type: "activation" as const, options: { sequence: 0 } },
-  capture,
-  reference: tracing.reserve({ key: turnKey, traceFlags: 1 }),
-  startTimeMs: Date.now(),
-};
-
-if (!tracing.sample(turnRecord)) {
-  turnRecord.capture = {
-    emit: false,
-    recordInputs: false,
-    recordOutputs: false,
-  };
-  turnRecord.reference = { ...turnRecord.reference, traceFlags: 0 };
-}
-
-const turn = await tracing.resolve(turnRecord);
-```
-
-`sample()` applies the configured sampler to the turn name and attributes.
-`resolve()` returns `undefined` if recording setup fails or the record is invalid.
-Use an optional handle so application execution can continue.
-
-Next, record an attempt under the turn:
-
-```ts
-const attemptKey = JSON.stringify([
-  identity.runId,
-  identity.turnId,
-  "attempt",
-  0, // Step index.
-  0, // Retry number.
-]);
-
-const attempt = await tracing.resolve({
-  key: attemptKey,
-  identity,
-  data: { type: "step", options: { index: 0, attempt: 0 } },
-  capture: turnRecord.capture,
-  reference: tracing.reserve({
-    key: attemptKey,
-    parent: turnRecord.reference,
-    traceFlags: turnRecord.reference.traceFlags,
-  }),
-  parent: turnRecord.reference,
-  startTimeMs: Date.now(),
+const attempt = await turn?.attempt({ stepIndex: 0, attempt: 0 });
+const model = await attempt?.modelCall({
+  provider: "example-provider",
+  modelId: "example-model",
 });
 ```
 
-The emitted attempt span has the name `agent.step`. The turn span has the name
-`invoke_agent support`.
+The library creates this structure:
 
-## Record a model call
+```text
+invoke_agent support
+└── agent.step
+    └── chat example-model
+```
 
-An attempt handle creates a model-call handle. Call `run()` to make its context
-active while the model executes. HTTP and database spans can then use that parent.
+The step index identifies the logical step. The attempt number identifies its
+retry. Each constructor call creates a separate physical operation.
+Keep each handle until its operation ends.
+
+`turn()` returns `undefined` if trace setup for that operation fails.
+Optional handles let the application continue execution.
+
+## Run and complete operations
+
+Call `run()` to make an operation's context active. HTTP and database spans
+created during execution can use that operation as their parent.
 
 ```ts
-const model = await attempt?.modelCall(
-  { provider: "example-provider", modelId: "example-model" },
-  JSON.stringify([attemptKey, "model", 0]),
-);
-
 try {
   const result = model === undefined ? await callModel() : await model.run(() => callModel());
 
@@ -164,13 +94,8 @@ try {
       usage: { inputTokens: 12, outputTokens: 8 },
     },
   });
-
   await attempt?.complete({ outcome: "completed" });
-  await turn?.complete({
-    outcome: "completed",
-    usage: { inputTokens: 12, outputTokens: 8 },
-  });
-
+  await turn?.complete({ outcome: "completed" });
   return result;
 } catch (error) {
   const failure = {
@@ -186,60 +111,31 @@ try {
 ```
 
 Here, `callModel()` is your application's model call. Supply its actual finish
-reason and usage to `complete()`. Shared SDK conversion functions can prepare
-model content and usage from SDK events.
+reason and usage. Model usage is added to the parent operations.
+Complete children before their parents. For streaming calls, complete the model
+after the stream ends.
 
-Complete child operations before their parents. For a cancelled turn, use
-`{ outcome: "cancelled" }`.
+Use `{ outcome: "cancelled" }` for a cancelled turn or attempt.
+An attempt also accepts gateway costs through `cost()`.
 
-## Record an action and tool execution
+## Record actions, approvals, and tools
 
-Create an action record under the attempt. Its `callId` identifies the logical
-tool call. Its key identifies the action execution:
+An attempt creates actions. Each action creates its approval and tool operations:
 
 ```ts
-const actionKey = JSON.stringify([attemptKey, "action", "lookup-1"]);
-const actionReference = tracing.reserve({
-  key: actionKey,
-  parent: attempt!.reference,
-  traceFlags: attempt!.reference.traceFlags,
-});
-
-const action = await tracing.resolve({
-  key: actionKey,
-  identity,
-  data: { type: "action", options: { callId: "lookup-1", name: "lookup" } },
-  capture: turnRecord.capture,
-  reference: actionReference,
-  parent: attempt!.reference,
-  startTimeMs: Date.now(),
-});
-
-const executionKey = JSON.stringify([actionKey, "execution", 0]);
-tracing.toolCall({
-  identity,
-  executionKey,
-  actionKey,
-  group: attemptKey,
+const action = await attempt?.action({
   callId: "lookup-1",
   name: "lookup",
-  capture: turnRecord.capture,
-  fallback: attempt!.reference,
+  arguments: { customerId: "customer-123" },
 });
-await tracing.actionAvailable(actionKey, actionReference);
-```
+const approval = await action?.approval({ requestId: "approval-1" });
+await approval?.complete({ outcome: "approved" });
 
-This example assumes the attempt handle exists. In an application adapter, skip
-child tracing when parent setup fails and continue the application operation.
-
-Run and complete the tool:
-
-```ts
-const execution = tracing.toolExecution(executionKey);
+const tool = await action?.toolExecution();
 try {
-  const result = execution === undefined ? await lookup() : await execution.run(() => lookup());
+  const result = tool === undefined ? await lookup() : await tool.run(() => lookup());
 
-  await tracing.completeTool(executionKey, { outcome: "completed", output: result });
+  await tool?.complete({ outcome: "completed", output: result });
   await action?.complete({ outcome: "completed", output: result });
 } catch (error) {
   const failure = {
@@ -247,80 +143,111 @@ try {
     errorType: error instanceof Error ? error.name : "_OTHER",
     error,
   };
-  await tracing.completeTool(executionKey, failure);
+  await tool?.complete(failure);
   await action?.complete(failure);
   throw error;
-} finally {
-  await tracing.endAttempt(attemptKey);
 }
 ```
 
-Here, `lookup()` is your application's tool implementation. A tool call can
-arrive before its action record. The recorder keeps the tool result until
-`actionAvailable()` supplies the parent. `endAttempt()` completes pending tools
-with their fallback parent.
+Here, `lookup()` is your tool implementation. The action supplies the tool name,
+call ID, and arguments. An error-valued result must use the failed outcome even
+when the tool promise resolves.
 
-## Record approvals and memory operations
-
-Resolve an approval record under its action. Include `requestId`, `callId`, and
-`actionName` in the record options. Complete the handle with the actual decision:
+For a denied approval, complete the approval and reject the action:
 
 ```ts
 await approval?.complete({ outcome: "denied", response: "Approval declined" });
 await action?.complete({ outcome: "rejected" });
 ```
 
-For memory records, set the operation to `search_memory` or `upsert_memory`.
-Supply `phase`, `slot`, and `storeId`. Complete a memory handle with its result:
+The parent structure is:
+
+```text
+turn
+└── attempt
+    ├── model call
+    └── action
+        ├── approval
+        └── tool execution
+```
+
+## Record memory operations
+
+Turns, attempts, and actions can create memory operations:
 
 ```ts
+const memory = await attempt?.memory({
+  operation: "search_memory",
+  phase: "retrieve",
+  slot: "history",
+  storeId: "customer-history",
+});
 await memory?.complete({ outcome: "completed", recordCount: 3 });
 ```
 
+Use `upsert_memory` to record a write. Supply the actual record count and any
+permitted records when the operation ends.
+
+## Select content capture
+
+Content capture is disabled by default. Set permissions when you create the turn:
+
+```ts
+const turn = await tracing.turn({
+  identity,
+  sequence: 0,
+  capture: { emit: true, recordInputs: true, recordOutputs: false },
+});
+```
+
+`emit` permits recording. `recordInputs` and `recordOutputs` select content in
+each direction. Children inherit the parent's effective permissions. The sampler
+can decline the trace. Nested execution can make permissions more restrictive.
+The library limits serialized content and retained tool data.
+
 ## Connect runtime events
 
-Translate your runtime's events into tracing operations:
+Translate lifecycle events into typed methods:
 
-| Runtime event         | Tracing operation                                     |
-| --------------------- | ----------------------------------------------------- |
-| Turn starts           | Resolve an activation record.                         |
-| Attempt starts        | Resolve a step record.                                |
-| Model call starts     | Call `attempt.modelCall()`.                           |
-| Model call ends       | Complete the model handle with usage and result data. |
-| Tool execution starts | Resolve an action and call `toolCall()`.              |
-| Tool execution ends   | Call `completeTool()` and complete the action.        |
-| Attempt ends          | Call `endAttempt()` and complete the attempt.         |
-| Turn ends             | Complete the turn with its outcome and total usage.   |
+| Runtime event         | Tracing method           |
+| --------------------- | ------------------------ |
+| Turn starts           | `tracing.turn()`         |
+| Attempt starts        | `turn.attempt()`         |
+| Model call starts     | `attempt.modelCall()`    |
+| Action starts         | `attempt.action()`       |
+| Approval starts       | `action.approval()`      |
+| Tool execution starts | `action.toolExecution()` |
+| Operation ends        | `handle.complete()`      |
 
-Keep handles in your adapter until their completion events arrive. Scope adapter
-state to one run, or use run and turn IDs as map keys for concurrent execution.
+Keep handles in adapter state until completion events arrive. Scope that state
+to one run, or key maps by run and turn IDs for concurrent execution.
+The HarnessAgent integration test demonstrates this event translation.
 
-For streaming calls, complete the model after the stream ends. Complete the turn
-after all child work ends. For operations reported after execution, use the
-original start time in the record.
+## Continue stored operations
 
-## Continue across processes
+Runtime adapters can reconstruct operations through `resolve(record, options)`.
+Supply the stored identity, operation description, reference, parent, start time,
+and capture decision. This uses the same private construction path as typed
+methods.
 
-Store operation keys, identity, references, parent references, start times, and
-capture decisions with your runtime state. Pass those values to `resolve()` in
-the process that continues execution.
+Use `{ deferred: true }` when a later worker completes the operation. The library
+emits that span at completion. Keep the original reference and start time across
+workers. Trace references preserve W3C tracestate.
 
-Use `resolve(record, { deferred: true })` when the operation ends in a later
-worker. The library emits that span when you call `complete()`.
-The stored reference lets child spans use the same parent across workers.
-
-Trace references preserve W3C tracestate. Use the original capture decision when
-you continue execution, and apply any stricter local permissions.
+For tool events that arrive before their action parent, runtime adapters use
+`toolCall()`, `actionAvailable()`, `completeTool()`, and `endAttempt()`.
+These methods retain the tool result until its parent arrives, then attach and
+complete the tool span.
 
 ## Export and close
 
-Flush at a runtime boundary where completed spans must be sent:
+Flush completed spans at a runtime boundary:
 
 ```ts
 await tracing.forceFlush();
 ```
 
-Close tracing when the application process ends:
+Close tracing when the process ends:
 
 ```ts
 await tracing.shutdown();

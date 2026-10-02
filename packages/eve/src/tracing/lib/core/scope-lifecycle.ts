@@ -50,11 +50,12 @@ export interface ScopeRecord {
 }
 
 export interface RuntimeScope {
+  readonly description: ScopeData;
+  child(data: ScopeData, key?: string): Promise<RuntimeScope>;
   readonly type: ScopeData["type"];
   readonly reference: TraceReference;
   readonly finished: boolean;
   readonly capture: CaptureDecision;
-  model(options: ModelOptions, binding: RuntimeBinding): Promise<RuntimeScope>;
   run<T>(execute: () => T, ceiling?: CaptureDecision): T;
   finish(result?: ScopeTerminal): Promise<void>;
   started(): Promise<void>;

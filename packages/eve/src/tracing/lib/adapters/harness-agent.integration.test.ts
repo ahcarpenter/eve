@@ -11,8 +11,6 @@ import type {
   ModelOperation,
   TurnOperation,
 } from "#tracing/lib/core/operations.js";
-import type { ScopeData, ScopeRecord } from "#tracing/lib/core/scope-lifecycle.js";
-import type { TraceReference } from "#tracing/lib/core/types.js";
 import { context, trace, propagation } from "@opentelemetry/api";
 import { modelUsage } from "#tracing/lib/adapters/ai-sdk-payload.js";
 
@@ -35,52 +33,26 @@ function harnessTelemetry(
     agentName: "support",
     framework: { name: "ai-sdk-harness", version: "1" },
   };
-  const capture = { emit: true, recordInputs: false, recordOutputs: false };
   let turn: TurnOperation | undefined;
   let attempt: AttemptOperation | undefined;
   let model: ModelOperation | undefined;
-  let stepKey = "";
-  const actions = new Map<string, ActionOperation>();
-  const key = (...parts: unknown[]) => JSON.stringify([identity.runId, identity.turnId, ...parts]);
-  function resolve<K extends ScopeData["type"]>(
-    operationKey: string,
-    data: Extract<ScopeData, { type: K }>,
-    parent?: TraceReference,
-  ) {
-    const reference = recorder.reserve({ key: operationKey, parent, traceFlags: 1 });
-    const record: ScopeRecord & { data: Extract<ScopeData, { type: K }> } = {
-      key: operationKey,
-      identity,
-      data,
-      capture,
-      reference,
-      parent,
-      startTimeMs: Date.now(),
-    };
-    return recorder.resolve<K>(record);
-  }
+  const actions = new Map<
+    string,
+    { action: ActionOperation; tool: import("#tracing/lib/core/operations.js").ToolOperation }
+  >();
   return {
     executeTool({ toolCallId, execute }) {
-      const operation = recorder.toolExecution(key("execution", toolCallId));
+      const operation = actions.get(toolCallId)?.tool;
       return operation === undefined ? execute() : operation.run(execute);
     },
     async onStart() {
-      turn = await resolve(key("turn"), { type: "activation", options: { sequence: 0 } });
+      turn = await recorder.turn({ identity, sequence: 0, framework: identity.framework });
     },
     async onStepStart(event) {
-      if (turn === undefined) return;
-      stepKey = key("attempt", event.stepNumber);
-      attempt = await resolve(
-        stepKey,
-        { type: "step", options: { index: event.stepNumber, attempt: 0 } },
-        turn.reference,
-      );
+      attempt = await turn?.attempt({ stepIndex: event.stepNumber, attempt: 0 });
     },
     async onLanguageModelCallStart(event) {
-      model = await attempt?.modelCall(
-        { provider: event.provider, modelId: event.modelId },
-        key("model", stepKey),
-      );
+      model = await attempt?.modelCall({ provider: event.provider, modelId: event.modelId });
     },
     async onLanguageModelCallEnd(event) {
       await model?.complete({
@@ -90,27 +62,12 @@ function harnessTelemetry(
       model = undefined;
     },
     async onToolExecutionStart(event) {
-      if (attempt === undefined) return;
-      const call = event.toolCall;
-      const actionKey = key("action", call.toolCallId);
-      const action = await resolve(
-        actionKey,
-        { type: "action", options: { callId: call.toolCallId, name: call.toolName } },
-        attempt.reference,
-      );
-      if (action === undefined) return;
-      actions.set(call.toolCallId, action);
-      recorder.toolCall({
-        identity,
-        executionKey: key("execution", call.toolCallId),
-        actionKey,
-        group: stepKey,
-        callId: call.toolCallId,
-        name: call.toolName,
-        fallback: attempt.reference,
-        capture,
+      const action = await attempt?.action({
+        callId: event.toolCall.toolCallId,
+        name: event.toolCall.toolName,
       });
-      await recorder.actionAvailable(actionKey, action.reference);
+      if (action !== undefined)
+        actions.set(event.toolCall.toolCallId, { action, tool: await action.toolExecution() });
     },
     async onToolExecutionEnd(event) {
       const output = event.toolOutput;
@@ -122,12 +79,12 @@ function harnessTelemetry(
               error: output.error,
             }
           : { outcome: "completed" as const };
-      await recorder.completeTool(key("execution", event.toolCall.toolCallId), completion);
-      await actions.get(event.toolCall.toolCallId)?.complete(completion);
+      const handles = actions.get(event.toolCall.toolCallId);
+      await handles?.tool.complete(completion);
+      await handles?.action.complete(completion);
       actions.delete(event.toolCall.toolCallId);
     },
     async onStepEnd() {
-      await recorder.endAttempt(stepKey);
       await attempt?.complete({ outcome: "completed" });
       attempt = undefined;
     },
@@ -143,8 +100,10 @@ function harnessTelemetry(
         error,
       };
       await model?.complete(completion);
-      await recorder.endAttempt(stepKey, { error });
-      for (const action of actions.values()) await action.complete(completion);
+      for (const handles of actions.values()) {
+        await handles.tool.complete(completion);
+        await handles.action.complete(completion);
+      }
       await attempt?.complete(completion);
       await turn?.complete(completion);
     },
@@ -242,36 +201,94 @@ const sandbox: SandboxSession = {
 };
 
 describe("HarnessAgent consumer instrumentation", () => {
+  it("constructs typed approval and memory children and applies root sampling", async () => {
+    const exporter = new InMemorySpanExporter();
+    const tracing = createAgentTracing({
+      agentName: "typed-agent",
+      otel: { sampler: "always_on", spanProcessors: [new SimpleSpanProcessor(exporter)] },
+    });
+    try {
+      const turn = (await tracing.turn({
+        identity: { conversationId: "typed", runId: "typed", turnId: "typed" },
+        sequence: 0,
+      }))!;
+      const attempt = await turn.attempt({ stepIndex: 0, attempt: 0 });
+      const action = await attempt.action({ callId: "lookup", name: "lookup" });
+      const approval = await action.approval({ requestId: "approval" });
+      await approval.complete({ outcome: "denied" });
+      const memory = await action.memory({
+        operation: "search_memory",
+        phase: "retrieve",
+        slot: "history",
+        storeId: "store",
+      });
+      await memory.complete({ outcome: "completed", recordCount: 3 });
+      await action.complete({ outcome: "rejected" });
+      await attempt.complete({ outcome: "completed" });
+      await turn.complete({ outcome: "completed" });
+      const spans = exporter.getFinishedSpans();
+      expect(
+        spans.find((span) => span.name === "agent.approval")?.attributes["agent.approval.outcome"],
+      ).toBe("denied");
+      expect(
+        spans
+          .filter((span) => span.name === "agent.approval" || span.name === "search_memory")
+          .every((span) => span.parentSpanContext?.spanId === action.reference.spanId),
+      ).toBe(true);
+    } finally {
+      await tracing.shutdown();
+      trace.disable();
+      propagation.disable();
+      context.disable();
+    }
+    const declined = new InMemorySpanExporter();
+    const unsampled = createAgentTracing({
+      agentName: "unsampled",
+      otel: { sampler: "always_off", spanProcessors: [new SimpleSpanProcessor(declined)] },
+    });
+    try {
+      const turn = (await unsampled.turn({
+        identity: { conversationId: "private", runId: "private", turnId: "private" },
+        sequence: 0,
+        capture: { emit: true, recordInputs: true, recordOutputs: true },
+      }))!;
+      expect(turn.capture).toEqual({ emit: false, recordInputs: false, recordOutputs: false });
+      const model = await (
+        await turn.attempt({ stepIndex: 0, attempt: 0 })
+      ).modelCall({
+        provider: "provider",
+        modelId: "model",
+        messages: [{ role: "user", content: "secret" }],
+      });
+      await model.complete({ outcome: "completed", result: { finishReason: "stop", usage: {} } });
+      await turn.complete({ outcome: "completed" });
+      expect(declined.getFinishedSpans()).toHaveLength(0);
+    } finally {
+      await unsampled.shutdown();
+      trace.disable();
+      propagation.disable();
+      context.disable();
+    }
+  });
   it("reports through Vercel request context without explicit OTel setup", async () => {
     const reportSpans = vi.fn();
     vi.stubEnv("VERCEL_ENV", "preview");
     vi.stubGlobal(Symbol.for("@vercel/request-context"), {
       get: () => ({ headers: {}, waitUntil() {}, telemetry: { reportSpans } }),
     });
-    const tracing = createAgentTracing({ serviceName: "vercel-harness" });
+    const tracing = createAgentTracing({ agentName: "vercel-harness" });
     try {
-      const reference = tracing.reserve({ key: "vercel-root", traceFlags: 1 });
-      const turn = await tracing.resolve({
-        key: "vercel-root",
-        identity: {
-          conversationId: "vercel-conversation",
-          runId: "vercel-run",
-          turnId: "turn",
-          agentName: "support",
-          framework: { name: "harness", version: "1" },
-        },
-        data: { type: "activation", options: { sequence: 0 } },
-        capture: { emit: true, recordInputs: false, recordOutputs: false },
-        reference,
-        startTimeMs: Date.now(),
+      const turn = await tracing.turn({
+        identity: { conversationId: "vercel-conversation", runId: "vercel-run", turnId: "turn" },
+        sequence: 0,
       });
       await turn!.complete({ outcome: "completed" });
       expect(reportSpans).toHaveBeenCalledOnce();
-      expect(JSON.stringify(reportSpans.mock.calls[0])).toContain("invoke_agent support");
-      expect(() => createAgentTracing({ serviceName: "different-service" })).toThrow(
+      expect(JSON.stringify(reportSpans.mock.calls[0])).toContain("invoke_agent vercel-harness");
+      expect(() => createAgentTracing({ agentName: "different-service" })).toThrow(
         /already owns OpenTelemetry/,
       );
-      const another = createAgentTracing({ serviceName: "vercel-harness" });
+      const another = createAgentTracing({ agentName: "vercel-harness" });
       expect(another.idGenerator).toBe(tracing.idGenerator);
       await Promise.all([tracing.shutdown(), another.shutdown()]);
     } finally {
@@ -288,7 +305,7 @@ describe("HarnessAgent consumer instrumentation", () => {
     async (method) => {
       const exporter = new InMemorySpanExporter();
       const recorder = createAgentTracing({
-        serviceName: "harness",
+        agentName: "support",
         otel: { spanProcessors: [new SimpleSpanProcessor(exporter)] },
       });
       const agent = new HarnessAgent({

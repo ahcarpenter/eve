@@ -172,6 +172,7 @@ export function createTraceLifecycle(input: {
     let finished = false;
     let started = false;
     const children = new Set<RuntimeScope>();
+    let childSequence = 0;
     let totalInput: number | undefined;
     let totalOutput: number | undefined;
     const usageKeys = new Set<string>();
@@ -185,6 +186,11 @@ export function createTraceLifecycle(input: {
       childData: ScopeData,
       childBinding: RuntimeBinding,
     ): Promise<RuntimeScope> {
+      if (childData.type === "step" && actualData.type === "activation")
+        childData = {
+          ...childData,
+          options: { ...childData.options, channel: actualData.options.channel },
+        };
       if (children.size >= scopeLimit) {
         for (const previous of children) if (previous.finished) children.delete(previous);
         if (children.size >= scopeLimit)
@@ -205,6 +211,21 @@ export function createTraceLifecycle(input: {
       return next;
     }
     const runtime: RuntimeScope = {
+      get description() {
+        return actualData;
+      },
+      child(data, childKey) {
+        const parents =
+          data.type === "step"
+            ? ["activation"]
+            : data.type === "model" || data.type === "action"
+              ? ["step"]
+              : data.type === "memory"
+                ? ["activation", "step", "action", "tool"]
+                : ["action"];
+        requireParent(parents as readonly ScopeData["type"][]);
+        return child(data, { key: childKey ?? JSON.stringify([key, data.type, childSequence++]) });
+      },
       type: actualData.type,
       reference: retainedReference,
       get capture() {
@@ -225,10 +246,6 @@ export function createTraceLifecycle(input: {
       }),
       get finished() {
         return finished;
-      },
-      model(options, childBinding) {
-        requireParent(["step"]);
-        return child({ type: "model", options }, childBinding);
       },
       run(execute, ceiling) {
         if (finished) throw new Error("The trace scope has already finished.");
@@ -466,6 +483,21 @@ export function createTraceLifecycle(input: {
   }
 
   return {
+    begin(
+      identity: ScopeIdentity,
+      metadata: import("#tracing/lib/core/scope-lifecycle.js").TurnMetadata,
+      capture: CaptureDecision,
+      key: string,
+    ) {
+      return construct(
+        identity,
+        capture,
+        { type: "activation", options: metadata },
+        undefined,
+        undefined,
+        { key },
+      );
+    },
     active: () => backend.active?.(),
     toolCall(input: ToolCallInput) {
       return pendingTool({

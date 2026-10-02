@@ -29,6 +29,21 @@ export function createTraceRecorder(input: {
     } catch {}
   };
   return {
+    async beginTurn(input: {
+      identity: import("#tracing/lib/core/scope-lifecycle.js").ScopeIdentity;
+      metadata: import("#tracing/lib/core/scope-lifecycle.js").TurnMetadata;
+      capture: import("#tracing/lib/core/types.js").CaptureDecision;
+      key: string;
+    }) {
+      try {
+        return operationHandle(
+          await runtime.begin(input.identity, input.metadata, input.capture, input.key),
+        ) as import("#tracing/lib/core/operations.js").TurnOperation;
+      } catch {
+        report();
+        return undefined;
+      }
+    },
     active: runtime.active,
     run: runtime.run,
     reserve: runtime.reserve,

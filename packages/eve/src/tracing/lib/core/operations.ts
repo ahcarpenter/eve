@@ -4,6 +4,9 @@ import type {
   ScopeTerminal,
   ModelOptions,
   ModelResult,
+  ActionOptions,
+  ApprovalOptions,
+  MemoryOptions,
 } from "#tracing/lib/core/scopes.js";
 import type { CaptureDecision } from "#tracing/lib/core/types.js";
 export type ToolResult =
@@ -29,18 +32,27 @@ export interface Operation<K extends ScopeRecord["data"]["type"], R> {
   run<T>(execute: () => T, ceiling?: CaptureDecision): T;
   complete(result: R): Promise<void>;
 }
-export type TurnOperation = Operation<"activation", TurnCompletion>;
+export interface TurnOperation extends Operation<"activation", TurnCompletion> {
+  attempt(input: { stepIndex: number; attempt: number }): Promise<AttemptOperation>;
+  memory(input: MemoryOptions): Promise<MemoryOperation>;
+}
 export interface AttemptOperation extends Operation<
   "step",
   { outcome: "completed" | "cancelled" } | Failure
 > {
   cost(input: import("#tracing/lib/core/scope-lifecycle.js").ScopeCost): void;
-  modelCall(input: ModelOptions, key: string): Promise<ModelOperation>;
+  modelCall(input: ModelOptions, key?: string): Promise<ModelOperation>;
+  action(input: ActionOptions): Promise<ActionOperation>;
+  memory(input: MemoryOptions): Promise<MemoryOperation>;
 }
 export interface ActionOperation extends Operation<
   "action",
   (ActionResult | { outcome: "abandoned" }) & { usage?: ScopeTerminal["usage"]; endTimeMs?: number }
-> {}
+> {
+  approval(input: ApprovalOptions): Promise<ApprovalOperation>;
+  toolExecution(): Promise<ToolOperation>;
+  memory(input: MemoryOptions): Promise<MemoryOperation>;
+}
 export type ModelOperation = Operation<
   "model",
   { outcome: "completed"; result: ModelResult } | Failure
@@ -103,13 +115,58 @@ export function operationHandle(runtime: RuntimeScope): RestoredOperation {
       } catch {}
     },
   };
+  const memory = async (options: MemoryOptions) =>
+    operationHandle(await runtime.child({ type: "memory", options })) as MemoryOperation;
+  if (runtime.type === "activation")
+    return {
+      ...common,
+      type: "activation",
+      memory,
+      attempt: async (input) =>
+        operationHandle(
+          await runtime.child({
+            type: "step",
+            options: { index: input.stepIndex, attempt: input.attempt },
+          }),
+        ) as AttemptOperation,
+    };
   if (runtime.type === "step")
     return {
       ...common,
       type: "step",
       cost: (input) => runtime.cost(input),
       modelCall: async (options, key) =>
-        operationHandle(await runtime.model(options, { key })) as ModelOperation,
+        operationHandle(await runtime.child({ type: "model", options }, key)) as ModelOperation,
+      action: async (options) =>
+        operationHandle(await runtime.child({ type: "action", options })) as ActionOperation,
+      memory,
     };
+  if (runtime.type === "action") {
+    const action = runtime.description;
+    if (action.type !== "action") throw new Error("Invalid action operation.");
+    return {
+      ...common,
+      type: "action",
+      memory,
+      approval: async (options) =>
+        operationHandle(
+          await runtime.child({
+            type: "approval",
+            options: { ...options, callId: action.options.callId, actionName: action.options.name },
+          }),
+        ) as ApprovalOperation,
+      toolExecution: async () =>
+        operationHandle(
+          await runtime.child({
+            type: "tool",
+            options: {
+              callId: action.options.callId,
+              name: action.options.name,
+              arguments: action.options.arguments,
+            },
+          }),
+        ) as ToolOperation,
+    };
+  }
   return { ...common, type: runtime.type };
 }
