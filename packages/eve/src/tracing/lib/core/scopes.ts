@@ -76,7 +76,6 @@ export function createTraceLifecycle(input: {
   readonly serializer: ContentSerializer;
   readonly mode?: "live" | "durable";
   readonly diagnostic?: (code: string) => void;
-  readonly mapIdentity?: (identity: ScopeIdentity) => Attributes;
 }) {
   input = { ...input, serializer: boundedSerializer(input.serializer, input.diagnostic) };
   const engine = createTraceEngine(input);
@@ -84,7 +83,6 @@ export function createTraceLifecycle(input: {
   const serializer = input.serializer;
   if (input.mode === "durable" && !("reserveActivation" in backend))
     throw new Error("Durable tracing requires reserved-ID backend support.");
-  let counter = 0;
   const scopeLimit = 10_000;
 
   async function construct(
@@ -93,33 +91,17 @@ export function createTraceLifecycle(input: {
     data: ScopeData,
     parent: RuntimeScope | undefined,
     attempt: ScopeRecord["attempt"],
-    binding?: RuntimeBinding,
+    binding: RuntimeBinding,
   ): Promise<RuntimeScope> {
-    const key = binding?.key ?? JSON.stringify([identity.runId, identity.turnId, counter++]);
-    const saved = binding?.snapshot;
-    if (
-      saved !== undefined &&
-      (saved.identity.runId !== identity.runId ||
-        saved.identity.turnId !== identity.turnId ||
-        saved.data.type !== data.type)
-    ) {
-      throw new Error("The persisted trace scope does not match the operation identity.");
-    }
-    const startTimeMs = saved?.startTimeMs ?? binding?.startTimeMs ?? Date.now();
-    const parentReference = saved?.parent ?? parent?.reference ?? binding?.parent;
-    const actualIdentity = saved?.identity ?? identity;
+    const key = binding.key;
+    const startTimeMs = binding.startTimeMs ?? Date.now();
+    const parentReference = parent?.reference ?? binding.parent;
+    const actualIdentity = identity;
     capture = intersectCapture(capture, input.backend.active?.()?.capture);
-    let actualCapture =
-      saved === undefined
-        ? capture
-        : {
-            emit: capture.emit && saved.capture.emit,
-            recordInputs: capture.recordInputs && saved.capture.recordInputs,
-            recordOutputs: capture.recordOutputs && saved.capture.recordOutputs,
-          };
-    let actualData = capturedData(saved?.data ?? data, actualCapture);
-    const actualAttempt = saved?.attempt ?? attempt;
-    const links = saved?.links ?? binding?.links;
+    let actualCapture = capture;
+    let actualData = capturedData(data, actualCapture);
+    const actualAttempt = attempt;
+    const links = binding.links;
     let prepared = prepare(
       actualIdentity,
       actualData,
@@ -130,20 +112,23 @@ export function createTraceLifecycle(input: {
       startTimeMs,
       links,
     );
-    prepared = { ...prepared, outputContext: saved?.outputContext ?? binding?.outputContext };
+    prepared = { ...prepared, outputContext: binding.outputContext };
     actualData = snapshotRecord(
       {
         key,
         identity: actualIdentity,
         data: actualData,
         capture: actualCapture,
-        reference: saved?.reference ??
-          binding?.reference ?? { traceId: "0".repeat(32), spanId: "0".repeat(16), traceFlags: 0 },
+        reference: binding.reference ?? {
+          traceId: "0".repeat(32),
+          spanId: "0".repeat(16),
+          traceFlags: 0,
+        },
         startTimeMs,
       },
       input.serializer,
     ).data;
-    const content = saved?.content ?? binding?.content;
+    const content = binding.content;
     if (actualData.type === "activation" && content !== undefined) {
       prepared = {
         ...prepared,
@@ -156,7 +141,7 @@ export function createTraceLifecycle(input: {
     }
     const durable = input.backend;
     const deferred = binding?.deferred ?? input.mode === "durable";
-    let reference = saved?.reference ?? binding?.reference;
+    let reference = binding.reference;
     if (deferred && reference === undefined) {
       if (!("reserveActivation" in durable))
         throw new Error("Checkpointed trace scopes require reserved-ID backend support.");
@@ -187,9 +172,9 @@ export function createTraceLifecycle(input: {
     let finished = false;
     let started = false;
     const children = new Set<RuntimeScope>();
-    let totalInput = saved?.usage?.inputTokens;
-    let totalOutput = saved?.usage?.outputTokens;
-    const usageKeys = new Set(saved?.usageKeys ?? []);
+    let totalInput: number | undefined;
+    let totalOutput: number | undefined;
+    const usageKeys = new Set<string>();
     let pendingError: { error?: unknown; errorType?: string } | undefined;
     const enrichment: Record<string, Attributes[string]> = {};
     function requireParent(types: readonly ScopeData["type"][]): void {
@@ -357,7 +342,7 @@ export function createTraceLifecycle(input: {
     startTimeMs: number,
     links?: readonly TraceLink[],
   ): PreparedSpan {
-    const shared = input.mapIdentity?.(identity) ?? identityAttributes(identity);
+    const shared = identityAttributes(identity);
     const attempted = {
       turnId: identity.turnId,
       index: attempt?.index ?? 0,

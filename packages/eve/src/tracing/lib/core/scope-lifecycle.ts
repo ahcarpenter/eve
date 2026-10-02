@@ -45,9 +45,6 @@ export interface ScopeRecord {
   readonly capture: CaptureDecision;
   readonly startTimeMs: number;
   readonly links?: readonly TraceLink[];
-  readonly usage?: { readonly inputTokens?: number; readonly outputTokens?: number };
-  readonly usageKeys?: readonly string[];
-  readonly childIndex?: number;
   readonly outputContext?: Readonly<Record<string, string>>;
   readonly content?: { readonly recordInputs: boolean; readonly recordOutputs: boolean };
 }
@@ -133,7 +130,6 @@ export interface ScopeCost {
 }
 
 export interface RuntimeBinding {
-  readonly snapshot?: ScopeRecord;
   readonly key: string;
   readonly reference?: TraceReference;
   readonly startTimeMs?: number;
