@@ -64,12 +64,19 @@ export function createAgentTracing(input: {
   return {
     ...recorder,
     ...runtime,
-    turn(turn: {
-      identity: import("#tracing/lib/core/types.js").RunIdentity;
-      sequence: number;
-      framework?: import("#tracing/lib/core/types.js").FrameworkIdentity;
-      capture?: import("#tracing/lib/core/types.js").CaptureDecision;
-    }) {
+    turn(
+      turn:
+        | {
+            identity: import("#tracing/lib/core/types.js").RunIdentity;
+            sequence: number;
+            framework?: import("#tracing/lib/core/types.js").FrameworkIdentity;
+            capture?: import("#tracing/lib/core/types.js").CaptureDecision;
+          }
+        | (import("#tracing/lib/core/recorder.js").RuntimeOperationInput & {
+            metadata: import("#tracing/lib/core/scope-lifecycle.js").TurnMetadata;
+          }),
+    ) {
+      if ("binding" in turn) return recorder.turn(turn);
       return recorder.beginTurn({
         identity: {
           ...turn.identity,

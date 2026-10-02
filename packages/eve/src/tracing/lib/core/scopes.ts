@@ -483,6 +483,15 @@ export function createTraceLifecycle(input: {
   }
 
   return {
+    start(
+      identity: ScopeIdentity,
+      data: ScopeData,
+      capture: CaptureDecision,
+      binding: RuntimeBinding,
+      attempt?: ScopeRecord["attempt"],
+    ) {
+      return construct(identity, capture, data, undefined, attempt, binding);
+    },
     begin(
       identity: ScopeIdentity,
       metadata: import("#tracing/lib/core/scope-lifecycle.js").TurnMetadata,

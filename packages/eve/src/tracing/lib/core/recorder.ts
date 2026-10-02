@@ -1,5 +1,21 @@
 import { createTraceLifecycle } from "#tracing/lib/core/scopes.js";
-import type { ScopeRecord } from "#tracing/lib/core/scopes.js";
+import type {
+  ScopeRecord,
+  ScopeIdentity,
+  RuntimeBinding,
+  TurnMetadata,
+  StepOptions,
+  ActionOptions,
+  MemoryOptions,
+} from "#tracing/lib/core/scopes.js";
+import type { CaptureDecision } from "#tracing/lib/core/types.js";
+
+export interface RuntimeOperationInput {
+  identity: ScopeIdentity;
+  capture: CaptureDecision;
+  binding: RuntimeBinding;
+  attempt?: ScopeRecord["attempt"];
+}
 import type { TraceBackend, DurableTraceBackend } from "#tracing/lib/core/types.js";
 import type { ContentSerializer } from "#tracing/lib/core/model.js";
 import type { ExecutionContext, TraceReference } from "#tracing/lib/core/types.js";
@@ -28,7 +44,39 @@ export function createTraceRecorder(input: {
       input.diagnostic?.("agent.tracing.operation.failed");
     } catch {}
   };
+  async function start<K extends ScopeRecord["data"]["type"]>(
+    input: RuntimeOperationInput,
+    data: Extract<ScopeRecord["data"], { type: K }>,
+  ): Promise<Extract<RestoredOperation, { type: K }> | undefined> {
+    try {
+      return operationHandle(
+        await runtime.start(input.identity, data, input.capture, input.binding, input.attempt),
+      ) as Extract<RestoredOperation, { type: K }>;
+    } catch {
+      report();
+      return undefined;
+    }
+  }
   return {
+    turn(input: RuntimeOperationInput & { metadata: TurnMetadata }) {
+      return start<"activation">(input, { type: "activation", options: input.metadata });
+    },
+    attempt(input: RuntimeOperationInput & { step: StepOptions }) {
+      return start<"step">(input, { type: "step", options: input.step });
+    },
+    action(input: RuntimeOperationInput & { action: ActionOptions }) {
+      return start<"action">(input, { type: "action", options: input.action });
+    },
+    approval(
+      input: RuntimeOperationInput & {
+        approval: Extract<ScopeRecord["data"], { type: "approval" }>["options"];
+      },
+    ) {
+      return start<"approval">(input, { type: "approval", options: input.approval });
+    },
+    memory(input: RuntimeOperationInput & { memory: MemoryOptions }) {
+      return start<"memory">(input, { type: "memory", options: input.memory });
+    },
     async beginTurn(input: {
       identity: import("#tracing/lib/core/scope-lifecycle.js").ScopeIdentity;
       metadata: import("#tracing/lib/core/scope-lifecycle.js").TurnMetadata;
