@@ -18,10 +18,8 @@ import { ContextAgentTraceStateStore } from "#tracing/agent-trace-context-store.
 import { createAgentOtelInstrumentation } from "#tracing/agent-otel-provider.js";
 import { hasConversationRelease, type LocalTracesProcessor } from "#tracing/local-traces.js";
 import type { CollectedOtel, RuntimeContextResolver } from "#tracing/otel-declaration.js";
-import {
-  registerOtelPipeline,
-  type RegisteredOtelPipeline,
-} from "#tracing/lib/adapters/otel-registration.js";
+import { createAgentTracing, type AgentTracing } from "#tracing/lib/agent-tracing.js";
+import { eveOutputMapping } from "#tracing/eve/profile.js";
 import { readConversationId } from "#shared/conversation-identity.js";
 
 const log = createLogger("tracing.install-instrumentation-runtime");
@@ -44,20 +42,22 @@ export function installInstrumentationRuntime(input: {
 }): InstrumentationRuntime {
   const serialBefore: InstrumentationProviderDefinition[] = [];
   const serialAfter: InstrumentationProviderDefinition[] = [];
-  let otelRuntime: RegisteredOtelPipeline | undefined;
+  let otelRuntime: AgentTracing | undefined;
   let prepareSessionTrace: InstrumentationRuntime["prepareSessionTrace"];
   let prepareTurnTrace: InstrumentationRuntime["prepareTurnTrace"];
   let runInContext: InstrumentationRuntime["runInContext"] = (_operation, execute) => execute();
 
   if (input.collected.declared) {
-    otelRuntime = registerOtelPipeline({
-      otel: input.collected.pipeline,
+    otelRuntime = createAgentTracing({
+      otel: input.collected.configuration,
+      mapping: eveOutputMapping(),
       serviceName: input.serviceName,
     });
     const agentOtel = createAgentOtelInstrumentation({
       environment: resolveInstrumentationEnvironment(),
       frameworkVersion: input.frameworkVersion,
       idGenerator: otelRuntime.idGenerator,
+      tracing: otelRuntime,
       recordInputs: input.collected.settings.recordInputs,
       recordOutputs: input.collected.settings.recordOutputs,
       samplesTrace: otelRuntime.samplesTrace,
@@ -71,7 +71,7 @@ export function installInstrumentationRuntime(input: {
     prepareTurnTrace = agentOtel.prepareTurnTrace;
     runInContext = agentOtel.runInContext;
 
-    const releasable = input.collected.pipeline.spanProcessors
+    const releasable = input.collected.configuration.spanProcessors
       .filter(isSpanProcessor)
       .filter(hasConversationRelease);
     if (releasable.length > 0) serialAfter.push(sessionReleaseProvider(releasable));

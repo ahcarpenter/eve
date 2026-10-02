@@ -18,8 +18,19 @@ payload conversion without installing a second SDK instrumentation path.
 
 ## Runtime interface
 
-Create `createTraceRecorder` with an output backend, content serializer, and
-explicit live or durable mode. Pass semantic operation records to `resolve`.
+Create `createAgentTracing({ serviceName, otel? })` at application startup. The
+factory owns OTel registration, stable IDs, sampling, default serialization,
+flush, and shutdown. On Vercel the default destination reports through request
+context immediately. Explicit OTel configuration supplies the full destination
+list. eve discovers and collects its declarations, then passes
+`otel: collected.configuration`; the library does not discover files.
+
+Instances share one registration for the same service name and configuration.
+Conflicting configuration and unrelated global providers fail explicitly.
+Operations are live by default. eve selects deferred emission per resolved
+operation when its workflow lifetime requires it, not through factory-wide mode.
+
+Pass semantic operation records to `resolve`.
 eve's codec supplies existing IDs, parent references, start times, capture
 permissions, and operation metadata. Invalid records return no handle.
 

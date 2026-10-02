@@ -12,12 +12,11 @@ const { forceFlush, internalTerminalState, shutdown } = vi.hoisted(() => ({
   shutdown: vi.fn(async () => undefined),
 }));
 
-vi.mock("#tracing/lib/adapters/otel-registration.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("#tracing/lib/adapters/otel-registration.js")>();
+vi.mock("#tracing/lib/agent-tracing.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("#tracing/lib/agent-tracing.js")>();
   return {
     ...actual,
-    registerOtelPipeline: () => ({
+    createAgentTracing: () => ({
       forceFlush,
       idGenerator: {
         allocateSpanId: () => "1".repeat(16),

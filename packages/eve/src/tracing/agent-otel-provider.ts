@@ -42,10 +42,14 @@ import type { ConversationEnvironment } from "#shared/conversation-context.js";
 import { createEveTraceLifecycle } from "#tracing/eve/scopes.js";
 import { eveScopeRecord } from "#tracing/eve/checkpoint-codec.js";
 import type { AttemptOperation, ModelOperation } from "#tracing/lib/core/operations.js";
+import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
+import { isUserMessageKind } from "#harness/messages.js";
+import { isObject } from "#shared/guards.js";
 
 type SpanState<T = AttemptOperation> = { readonly runtime: T; readonly context: Context };
 
 export interface AgentOtelInstrumentationInput {
+  readonly tracing?: ReturnType<typeof createTraceRecorder>;
   readonly environment?: ConversationEnvironment;
   /** Whether any destination records model and tool inputs. */
   readonly recordInputs?: boolean;
@@ -78,7 +82,7 @@ export function createAgentOtelInstrumentation(
   const environment = input.environment ?? resolveInstrumentationEnvironment();
   const recordInputs = input.recordInputs ?? false;
   const recordOutputs = input.recordOutputs ?? false;
-  const lifecycle = createEveTraceLifecycle(input);
+  const lifecycle = input.tracing ?? createEveTraceLifecycle(input);
   const attemptScopes = new Map<string, InstrumentationAttemptScope>();
   // A lost serverless worker retries the whole turn step from entry.
   const steps = new WeakMap<InstrumentationAttemptScope, SpanState>();
@@ -236,7 +240,13 @@ export function createAgentOtelInstrumentation(
       {
         provider: event.model.provider,
         modelId: event.model.modelId,
-        messages: recordInputs ? event.input?.messages : undefined,
+        messages: recordInputs
+          ? event.input?.messages.map((message) =>
+              isObject(message) && message.role === "user"
+                ? { ...message, kind: isUserMessageKind(message.kind) ? message.kind : undefined }
+                : message,
+            )
+          : undefined,
         instructions: recordInputs ? event.input?.instructions : undefined,
         runtimeContext: event.runtimeContext,
       },

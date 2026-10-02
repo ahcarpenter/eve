@@ -8,8 +8,9 @@ import {
 import { defineInstrumentation } from "#public/instrumentation/index.js";
 import { otel, type TracePolicyDecision } from "#public/instrumentation/otel.js";
 
-vi.mock("#tracing/lib/adapters/otel-registration.js", () => ({
-  registerOtelPipeline: () => ({
+vi.mock("#tracing/lib/agent-tracing.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("#tracing/lib/agent-tracing.js")>()),
+  createAgentTracing: () => ({
     forceFlush: async () => undefined,
     idGenerator: {
       deriveSpanId: () => "2".repeat(16),

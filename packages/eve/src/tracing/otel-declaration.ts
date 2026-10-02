@@ -13,6 +13,7 @@ import type { JsonObject } from "#shared/json.js";
 import { batchSpanProcessor } from "#tracing/lib/adapters/batch-span-processor.js";
 import { contentFilteringProcessor } from "#tracing/content-span-processor.js";
 import { vercelRuntimeSpanProcessor } from "#tracing/lib/adapters/vercel-runtime-span-exporter.js";
+import type { OtelConfiguration } from "#tracing/lib/adapters/otel-configuration.js";
 import type { TraceCapturePolicy } from "#shared/trace-policy.js";
 export type {
   TraceCaptureContext,
@@ -226,14 +227,6 @@ export function isOtelIntegration(value: unknown): value is OtelIntegration {
 }
 
 /** The one pipeline a process can register. @internal */
-export interface OtelPipeline {
-  readonly instrumentations?: readonly unknown[];
-  readonly metricReaders?: readonly MetricReader[];
-  readonly propagators?: readonly PropagatorOrName[];
-  readonly resource?: Readonly<Record<string, unknown>>;
-  readonly sampler?: SamplerOrName;
-  readonly spanProcessors: readonly SpanProcessorOrName[];
-}
 
 /** What the harness reads at turn time, as opposed to at registration. @internal */
 export interface OtelHarnessSettings {
@@ -258,7 +251,7 @@ export interface CollectedOtel {
    * global tracer provider slot alone rather than register an empty pipeline.
    */
   readonly declared: boolean;
-  readonly pipeline: OtelPipeline;
+  readonly configuration: OtelConfiguration;
   readonly runtimeContextResolvers: readonly RuntimeContextResolver[];
   readonly settings: OtelHarnessSettings;
 }
@@ -314,7 +307,7 @@ export function collectOtelPipeline(values: readonly unknown[]): CollectedOtel {
   }
   return {
     declared,
-    pipeline: {
+    configuration: {
       instrumentations: options.instrumentations,
       metricReaders: metricReaders.length > 0 ? metricReaders : undefined,
       propagators: options.propagators,

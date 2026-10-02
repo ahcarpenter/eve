@@ -163,7 +163,7 @@ describe("collectOtelPipeline", () => {
     ]);
 
     expect(collected.declared).toBe(true);
-    expect(collected.pipeline.spanProcessors).toStrictEqual([first, second, third]);
+    expect(collected.configuration.spanProcessors).toStrictEqual([first, second, third]);
   });
 
   it("is declared by a destination alone, with no otel() beside it", () => {
@@ -189,7 +189,7 @@ describe("collectOtelPipeline", () => {
       }),
     ]);
 
-    expect(collected.pipeline).toMatchObject({
+    expect(collected.configuration).toMatchObject({
       propagators: ["tracecontext"],
       resource: { "service.version": "abc" },
       sampler: "always_on",
@@ -221,12 +221,12 @@ describe("collectOtelPipeline", () => {
     const instrumentation = { name: "test-instrumentation" };
     const collected = collectOtelPipeline([otel({ instrumentations: [instrumentation] })]);
 
-    expect(collected.pipeline.instrumentations).toStrictEqual([instrumentation]);
+    expect(collected.configuration.instrumentations).toStrictEqual([instrumentation]);
   });
 
   it("defaults to undefined instrumentations when none are declared", () => {
     const collected = collectOtelPipeline([otel()]);
 
-    expect(collected.pipeline.instrumentations).toBeUndefined();
+    expect(collected.configuration.instrumentations).toBeUndefined();
   });
 });
