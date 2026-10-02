@@ -23,6 +23,17 @@ Created with `npx eve@latest init`, which installed eve 0.70.1. The first commit
 | `loopback/run.mjs`              | New, local run only. Builds, starts, makes the requests and prints the server's log lines.                                          |
 | `package.json`                  | Adds `@opentelemetry/api`, the `repro` script and the `#loopback-world` alias.                                                      |
 
+## Get this branch
+
+This reproduction is a branch with its own history, not a change on top of eve's source. Clone only this branch:
+
+```bash
+git clone --branch repro/stream-span-double-end --single-branch https://github.com/ahcarpenter/eve.git eve-stream-span-repro
+cd eve-stream-span-repro
+```
+
+Both sets of steps below start in that folder.
+
 ## Reproduce on Vercel
 
 Needs a Vercel account. Needs no model credential.
