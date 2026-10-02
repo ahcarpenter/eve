@@ -9,7 +9,6 @@ import {
   type InstrumentationSessionTransitionEvent,
   type InstrumentationUsage,
 } from "#instrumentation/lifecycle.js";
-import type { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import { normalizeChannelAudience } from "#shared/channel-audience.js";
 import type { ChannelAudience } from "#shared/channel-audience.js";
 import type { TraceCapturePolicy } from "#tracing/otel-declaration.js";
@@ -37,7 +36,6 @@ interface EveSessionTracingInput {
   readonly lifecycle: ReturnType<typeof createTraceRecorder>;
   readonly environment: ConversationEnvironment;
   readonly frameworkVersion: string;
-  readonly idGenerator: AgentSpanIdGenerator;
   readonly stateStore: AgentTraceStateStore;
   readonly tracePolicy?: TraceCapturePolicy;
 }

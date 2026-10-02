@@ -141,7 +141,7 @@ export interface BoundInstrumentationSession {
 export interface InstrumentationRuntime {
   readonly forceFlush: () => Promise<void>;
   readonly hooks: InstrumentationHooks;
-  readonly idGenerator?: AgentSpanIdGenerator;
+  readonly idGenerator: AgentSpanIdGenerator;
   readonly memoryOperations?: boolean;
   readonly ownsAgentSpans?: boolean;
   readonly prepareSessionTrace?: (

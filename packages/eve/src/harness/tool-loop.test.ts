@@ -1,3 +1,4 @@
+import { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import { context as otelContext, trace } from "#compiled/@opentelemetry/api/index.js";
 import {
   type FilePart,
@@ -194,6 +195,7 @@ function declareTelemetry(
       ? undefined
       : {
           forceFlush: async () => undefined,
+          idGenerator: new AgentSpanIdGenerator(),
           hooks: createInstrumentationHooks([]),
           otelSettings: {
             ...config,
@@ -225,6 +227,7 @@ function bindHookInstrumentation(
   return bindInstrumentationRuntime(
     {
       forceFlush: async () => undefined,
+      idGenerator: new AgentSpanIdGenerator(),
       hooks,
       otelSettings: useDeclaredRuntime ? declaredRuntime?.otelSettings : undefined,
       runtimeContextResolvers: useDeclaredRuntime

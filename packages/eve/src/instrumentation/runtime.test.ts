@@ -45,6 +45,7 @@ function createRuntime(
 ): InstrumentationRuntime {
   return {
     forceFlush: async () => undefined,
+    idGenerator: new AgentSpanIdGenerator(),
     hooks,
     otelSettings: {
       recordInputs: true,
@@ -355,6 +356,7 @@ describe("initializeSessionInstrumentation", () => {
   });
 
   it("does not widen an unsampled parent with a record decision", () => {
+    registerInstrumentationRuntime(createRuntime({ capturesContent: true, publish: vi.fn() }));
     const ctx = createContext("public");
     ctx.set(ParentTraceContextKey, {
       decision: { action: "record", recordInputs: true, recordOutputs: true },

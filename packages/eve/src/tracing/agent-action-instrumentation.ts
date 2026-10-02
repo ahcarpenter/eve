@@ -14,7 +14,6 @@ import type {
 import { actionIdempotencyKey, attemptIdempotencyKey } from "#instrumentation/lifecycle.js";
 import { traceSessionIdOf } from "#tracing/eve/checkpoint-codec.js";
 import { contentAttribute } from "#tracing/lib/adapters/serialization.js";
-import type { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import type { AgentActionTraceState, AgentTraceStateStore } from "#tracing/agent-trace-state.js";
 import { normalizeChannelAudience } from "#shared/channel-audience.js";
 import { isSampledTrace } from "#shared/trace-policy.js";
@@ -46,7 +45,6 @@ export interface AgentActionContext {
 export function createAgentActionInstrumentation(input: {
   readonly lifecycle: ReturnType<typeof createTraceRecorder>;
   readonly frameworkVersion: string;
-  readonly idGenerator: AgentSpanIdGenerator;
   readonly recordInputs: boolean;
   readonly recordOutputs: boolean;
   readonly resolveTraceContext: (

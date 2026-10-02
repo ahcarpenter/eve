@@ -46,6 +46,7 @@ export function installInstrumentationRuntime(input: {
   let prepareSessionTrace: InstrumentationRuntime["prepareSessionTrace"];
   let prepareTurnTrace: InstrumentationRuntime["prepareTurnTrace"];
   let runInContext: InstrumentationRuntime["runInContext"] = (_operation, execute) => execute();
+  let idGenerator: AgentSpanIdGenerator;
 
   if (input.collected.declared) {
     otelRuntime = createAgentTracing({
@@ -53,6 +54,7 @@ export function installInstrumentationRuntime(input: {
       mapping: eveOutputMapping(),
       serviceName: input.serviceName,
     });
+    idGenerator = otelRuntime.idGenerator;
     const agentOtel = createAgentOtelInstrumentation({
       environment: resolveInstrumentationEnvironment(),
       frameworkVersion: input.frameworkVersion,
@@ -75,6 +77,8 @@ export function installInstrumentationRuntime(input: {
       .filter(isSpanProcessor)
       .filter(hasConversationRelease);
     if (releasable.length > 0) serialAfter.push(sessionReleaseProvider(releasable));
+  } else {
+    idGenerator = new AgentSpanIdGenerator();
   }
 
   const allProviders = [...serialBefore, ...input.providers, ...serialAfter];
@@ -89,7 +93,7 @@ export function installInstrumentationRuntime(input: {
       serialAfter,
       serialBefore,
     }),
-    idGenerator: otelRuntime?.idGenerator ?? new AgentSpanIdGenerator(),
+    idGenerator,
     memoryOperations: otelRuntime !== undefined || input.providers.some(hasMemoryOperationHandler),
     otelSettings: input.collected.declared ? input.collected.settings : undefined,
     ownsAgentSpans: otelRuntime !== undefined,

@@ -93,7 +93,6 @@ export function createAgentOtelInstrumentation(
   const actions = createAgentActionInstrumentation({
     lifecycle,
     frameworkVersion: input.frameworkVersion,
-    idGenerator: input.idGenerator,
     recordInputs,
     recordOutputs,
     resolveTraceContext: async (event) => {
@@ -106,7 +105,6 @@ export function createAgentOtelInstrumentation(
     lifecycle,
     actionContextFor: actions.contextFor,
     frameworkVersion: input.frameworkVersion,
-    idGenerator: input.idGenerator,
   });
   const tools = createAgentToolInstrumentation({
     lifecycle,

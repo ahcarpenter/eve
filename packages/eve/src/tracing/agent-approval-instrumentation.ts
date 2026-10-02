@@ -12,7 +12,6 @@ import { traceSessionIdOf } from "#tracing/eve/checkpoint-codec.js";
 import { decodeTraceSessionId } from "#tracing/agent-trace-context-codec.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
 import type { AgentActionContext } from "#tracing/agent-action-instrumentation.js";
-import type { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import { normalizeChannelAudience, type ChannelAudience } from "#shared/channel-audience.js";
 import { eveScopeRecord, checkpointContent } from "#tracing/eve/checkpoint-codec.js";
 import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
@@ -42,7 +41,6 @@ export function createAgentApprovalInstrumentation(input: {
     callId: string,
   ) => Promise<AgentActionContext | undefined>;
   readonly frameworkVersion: string;
-  readonly idGenerator: AgentSpanIdGenerator;
 }): Pick<
   NonNullable<InstrumentationProviderDefinition["events"]>,
   "input.requested" | "input.resolved"
