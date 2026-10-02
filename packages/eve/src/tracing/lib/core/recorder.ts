@@ -22,6 +22,20 @@ import type { ExecutionContext, TraceReference } from "#tracing/lib/core/types.j
 import type { ToolCallInput } from "#tracing/lib/core/pending-tool.js";
 import { validSnapshot } from "#tracing/lib/core/snapshot.js";
 import { operationHandle, type RestoredOperation } from "#tracing/lib/core/operations.js";
+import { randomUUID } from "node:crypto";
+
+export interface MemoryPointcutData<T> {
+  identity: ScopeIdentity;
+  storeId: string;
+  slot: string;
+  phase: string;
+  capture?: CaptureDecision;
+  binding?: RuntimeBinding;
+  describe?: (value: T) => {
+    recordCount?: number;
+    records?: readonly { id?: string; content: string }[];
+  };
+}
 
 export function createTraceRecorder(input: {
   output: TraceBackend | DurableTraceBackend;
@@ -55,6 +69,48 @@ export function createTraceRecorder(input: {
     } catch {
       report();
       return undefined;
+    }
+  }
+  async function memory<T>(
+    operation: MemoryOptions["operation"],
+    data: MemoryPointcutData<T>,
+    execute: () => T | PromiseLike<T>,
+  ): Promise<T> {
+    const active = runtime.active();
+    const handle = await start<"memory">(
+      {
+        identity: data.identity,
+        capture: data.capture ??
+          active?.capture ?? { emit: true, recordInputs: false, recordOutputs: false },
+        binding: data.binding ?? { key: randomUUID(), parent: active?.reference },
+      },
+      {
+        type: "memory",
+        options: { operation, phase: data.phase, slot: data.slot, storeId: data.storeId },
+      },
+    );
+    let completion: Parameters<
+      import("#tracing/lib/core/operations.js").MemoryOperation["complete"]
+    >[0] = { outcome: "completed" };
+    try {
+      const value = await (handle === undefined ? execute() : handle.run(execute, data.capture));
+      let result;
+      try {
+        result = data.describe?.(value);
+      } catch {
+        report();
+      }
+      completion = { outcome: "completed", ...result };
+      return value;
+    } catch (error) {
+      completion = {
+        outcome: "failed",
+        errorType: error instanceof Error ? error.name : "_OTHER",
+        error,
+      };
+      throw error;
+    } finally {
+      await handle?.complete(completion);
     }
   }
   return {
@@ -108,8 +164,13 @@ export function createTraceRecorder(input: {
         { type: "approval", options: input.approval },
       );
     },
-    memory(input: RuntimeOperationInput & { memory: MemoryOptions }) {
-      return start<"memory">(input, { type: "memory", options: input.memory });
+    memory: {
+      search<T>(data: MemoryPointcutData<T>, execute: () => T | PromiseLike<T>) {
+        return memory("search_memory", data, execute);
+      },
+      write<T>(data: MemoryPointcutData<T>, execute: () => T | PromiseLike<T>) {
+        return memory("upsert_memory", data, execute);
+      },
     },
     async beginTurn(input: {
       identity: import("#tracing/lib/core/scope-lifecycle.js").ScopeIdentity;

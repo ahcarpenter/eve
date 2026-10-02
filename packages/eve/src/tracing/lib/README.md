@@ -173,6 +173,28 @@ turn
 
 ## Record memory operations
 
+Wrap a memory operation with an around pointcut. Supply metadata first and
+execution second:
+
+```ts
+const result = await turn!.run(() =>
+  tracing.memory.search(
+    {
+      identity: { ...identity, framework: { name: "custom", version: "1" } },
+      storeId: "customer-history",
+      slot: "history",
+      phase: "retrieve",
+    },
+    () => store.search(query),
+  ),
+);
+```
+
+Use `tracing.memory.write(data, execute)` for writes. Each method returns the
+original result, records thrown errors, and completes its span automatically.
+The active operation supplies the parent context. Add `describe` to metadata
+when the result contains a record count or records to capture.
+
 Turns, attempts, and actions can create memory operations:
 
 ```ts

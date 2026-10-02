@@ -201,6 +201,70 @@ const sandbox: SandboxSession = {
 };
 
 describe("HarnessAgent consumer instrumentation", () => {
+  it("finalizes memory pointcuts and preserves application values and errors", async () => {
+    const exporter = new InMemorySpanExporter();
+    const tracing = createAgentTracing({
+      agentName: "memory-agent",
+      otel: { spanProcessors: [new SimpleSpanProcessor(exporter)] },
+    });
+    try {
+      const turn = (await tracing.turn({
+        identity: { conversationId: "memory", runId: "memory", turnId: "turn" },
+        sequence: 0,
+      }))!;
+      const data = {
+        identity: {
+          conversationId: "memory",
+          runId: "memory",
+          turnId: "turn",
+          framework: { name: "test", version: "1" },
+        },
+        storeId: "store",
+        slot: "history",
+        phase: "retrieve",
+      };
+      const value = { records: ["Alice's preference"] };
+      let executions = 0;
+      expect(
+        await turn.run(() =>
+          tracing.memory.search(
+            {
+              ...data,
+              describe: () => {
+                throw new Error("description failure");
+              },
+            },
+            async () => {
+              executions++;
+              return value;
+            },
+          ),
+        ),
+      ).toBe(value);
+      const failure = new TypeError("write failed");
+      await expect(
+        turn.run(() =>
+          tracing.memory.write(data, async () => {
+            executions++;
+            throw failure;
+          }),
+        ),
+      ).rejects.toBe(failure);
+      await turn.complete({ outcome: "completed" });
+      expect(executions).toBe(2);
+      const search = exporter.getFinishedSpans().find((span) => span.name === "search_memory")!;
+      const write = exporter.getFinishedSpans().find((span) => span.name === "upsert_memory")!;
+      expect(search.parentSpanContext?.spanId).toBe(turn.reference.spanId);
+      expect(write.status.code).toBe(2);
+      expect(write.attributes["error.type"]).toBe("TypeError");
+      expect(write.events.some((event) => event.name === "exception")).toBe(false);
+    } finally {
+      await tracing.shutdown();
+      trace.disable();
+      propagation.disable();
+      context.disable();
+    }
+  });
   it("constructs typed approval and memory children and applies root sampling", async () => {
     const exporter = new InMemorySpanExporter();
     const tracing = createAgentTracing({
