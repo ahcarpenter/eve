@@ -668,12 +668,14 @@ describe("createAgentOtelInstrumentation", () => {
     const contextWith = vi.spyOn(context, "with");
     await runtime.runInContext(
       {
-        idempotencyKey: operation.idempotencyKey,
-        sessionId: operation.sessionId,
-        turnId: operation.turnId,
+        ...operation,
         type: "memory.operation",
       },
-      async () => undefined,
+      async () => ({
+        value: undefined,
+        recordCount: 1,
+        outputRecords: [{ content: "The user prefers dark mode.", id: "preference" }],
+      }),
     );
     const memoryContext = contextWith.mock.calls[0]?.[0];
     contextWith.mockRestore();

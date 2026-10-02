@@ -286,7 +286,6 @@ export function createAgentOtelInstrumentation(
           await tools.actionStarted(event);
         },
         ...approvals,
-        ...memory.events,
         "step.attempt.completed": onStepTerminal,
         "step.attempt.failed": onStepTerminal,
         "step.attempt.metadata": onStepMetadata,

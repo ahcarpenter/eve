@@ -1,137 +1,47 @@
-import { ROOT_CONTEXT, context, trace, type Context } from "#compiled/@opentelemetry/api/index.js";
-
+import { ROOT_CONTEXT, context, trace } from "#compiled/@opentelemetry/api/index.js";
 import { contextStorage } from "#context/container.js";
 import { SessionTraceSeedKey } from "#context/keys.js";
-import type { InstrumentationProviderDefinition } from "#instrumentation/lifecycle.js";
 import type {
   InstrumentationMemoryExecutionOperation,
-  InstrumentationMemoryOperationEvent,
-  InstrumentationMemoryOperationStartedEvent,
-  InstrumentationMemoryOperationTerminalEvent,
+  MemoryInstrumentationResult,
 } from "#instrumentation/memory.js";
 import { normalizeChannelAudience } from "#shared/channel-audience.js";
 import {
   applyLiveDeliveryAudienceCeiling,
   resolveForwardedTraceSeed,
 } from "#shared/forwarded-trace-policy.js";
+import type { ConversationEnvironment } from "#shared/conversation-context.js";
 import type { AgentTraceStateStore } from "#tracing/eve/agent-trace-state.js";
 import { withChannelAudience } from "#tracing/eve/channel-audience-context.js";
-import { isSampledTrace } from "#shared/trace-policy.js";
-import type { ConversationEnvironment } from "#shared/conversation-context.js";
 import { eveOperationInput } from "#tracing/eve/checkpoint-codec.js";
-import type { MemoryOperation } from "#tracing/lib/core/operations.js";
 import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
 
-type SpanState = { readonly runtime: MemoryOperation; readonly context: Context };
-
-interface AgentMemoryInstrumentation {
-  readonly events: Pick<
-    NonNullable<InstrumentationProviderDefinition["events"]>,
-    "memory.operation.completed" | "memory.operation.failed" | "memory.operation.started"
-  >;
-  runInContext<T>(
-    operation: InstrumentationMemoryExecutionOperation,
-    execute: () => PromiseLike<T>,
-  ): Promise<T>;
-}
-
 export function createAgentMemoryInstrumentation(input: {
-  readonly lifecycle: ReturnType<typeof createTraceRecorder>;
-  readonly environment: ConversationEnvironment;
-  readonly recordOutputs?: boolean;
-  readonly stateStore: AgentTraceStateStore;
-}): AgentMemoryInstrumentation {
-  const recordOutputs = input.recordOutputs ?? false;
-  const spans = new Map<string, SpanState>();
-
-  const parentContext = async (
-    event: InstrumentationMemoryOperationEvent,
-  ): Promise<Context | undefined> => {
-    const active = context.active();
-    if (input.lifecycle.active() !== undefined) return active;
-
-    const session = await input.stateStore.getSession(event.sessionId);
-    if (event.turnId !== undefined) {
-      const turn = await input.stateStore.getTurn(event.sessionId, event.turnId);
-      if (turn !== undefined) {
-        return withChannelAudience(contextFromSpanContext(turn.context), session?.channelAudience);
-      }
-    }
-    return session === undefined
-      ? undefined
-      : withChannelAudience(contextFromSpanContext(session.context), session.channelAudience);
-  };
-
-  const onStarted = async (event: InstrumentationMemoryOperationStartedEvent): Promise<void> => {
-    if (spans.has(event.idempotencyKey)) return;
-    const parent = await parentContext(event);
-    const parentSpan = parent === undefined ? undefined : trace.getSpan(parent)?.spanContext();
-    if (parent === undefined || parentSpan === undefined || !isSampledTrace(parentSpan)) return;
-    const runtime = await input.lifecycle.memory({
-      ...eveOperationInput(
-        {
-          ...event,
-          turnId: event.turnId ?? "",
-          frameworkVersion: "",
-          parent: parentSpan,
-        },
-        event.idempotencyKey,
-        false,
-        parent,
-      ),
-      memory: {
-        operation: event.operationName,
-        phase: event.phase,
-        slot: event.slot,
-        storeId: event.storeId,
-      },
-    });
-    if (runtime === undefined) return;
-    spans.set(event.idempotencyKey, {
-      context: trace.setSpan(parent, trace.wrapSpanContext(runtime.reference)),
-      runtime,
-    });
-  };
-
-  const onTerminal = async (event: InstrumentationMemoryOperationTerminalEvent): Promise<void> => {
-    const state = spans.get(event.idempotencyKey);
-    if (state === undefined) return;
-    spans.delete(event.idempotencyKey);
-    await state.runtime.complete(
-      event.type === "memory.operation.failed"
-        ? {
-            outcome: "failed",
-            errorType: event.error instanceof Error ? event.error.name : "_OTHER",
-            error: event.error,
-          }
-        : { outcome: "completed", recordCount: event.recordCount, records: event.outputRecords },
-    );
-  };
-
+  lifecycle: ReturnType<typeof createTraceRecorder>;
+  environment: ConversationEnvironment;
+  recordOutputs?: boolean;
+  stateStore: AgentTraceStateStore;
+}) {
   return {
-    events: {
-      "memory.operation.completed": onTerminal,
-      "memory.operation.failed": onTerminal,
-      "memory.operation.started": onStarted,
-    },
-    async runInContext(operation, execute) {
+    async runInContext<T>(
+      operation: InstrumentationMemoryExecutionOperation,
+      execute: () => PromiseLike<T>,
+    ): Promise<T> {
       const session = await input.stateStore.getSession(operation.sessionId);
-      let parent = spans.get(operation.idempotencyKey)?.context;
-      if (parent === undefined && operation.turnId !== undefined) {
-        const turn = await input.stateStore.getTurn(operation.sessionId, operation.turnId);
-        if (turn !== undefined) {
-          parent = withChannelAudience(
-            contextFromSpanContext(turn.context),
-            session?.channelAudience,
-          );
-        }
-      }
-      if (parent === undefined && session !== undefined) {
-        parent = withChannelAudience(
-          contextFromSpanContext(session.context),
-          session.channelAudience,
-        );
-      }
+      const turn =
+        operation.turnId === undefined
+          ? undefined
+          : await input.stateStore.getTurn(operation.sessionId, operation.turnId);
+      const active = input.lifecycle.active();
+      const reference = active?.reference ?? turn?.context ?? session?.context;
+      if (reference === undefined) return await execute();
+      const host =
+        active === undefined
+          ? withChannelAudience(
+              trace.setSpan(ROOT_CONTEXT, trace.wrapSpanContext(reference)),
+              session?.channelAudience,
+            )
+          : context.active();
       const seed = resolveForwardedTraceSeed(contextStorage.getStore()?.get(SessionTraceSeedKey));
       const decision = seed?.decision ?? session?.decision;
       const effective =
@@ -144,21 +54,32 @@ export function createAgentMemoryInstrumentation(input: {
               input.environment,
             );
       const capture = {
-        emit:
-          parent !== undefined &&
-          ((trace.getSpan(parent)?.spanContext().traceFlags ?? 0) & 1) !== 0,
+        emit: (reference.traceFlags & 1) !== 0,
         recordInputs: effective?.action === "record" && effective.recordInputs,
-        recordOutputs: recordOutputs && effective?.action === "record" && effective.recordOutputs,
+        recordOutputs:
+          input.recordOutputs === true && effective?.action === "record" && effective.recordOutputs,
       };
-      const runtime = spans.get(operation.idempotencyKey)?.runtime;
-      if (runtime !== undefined) return await runtime.run(execute, capture);
-      return parent === undefined
-        ? await execute()
-        : await input.lifecycle.run(trace.getSpan(parent)!.spanContext(), capture, execute, parent);
+      const runtime = eveOperationInput(
+        { ...operation, turnId: operation.turnId ?? "", frameworkVersion: "", parent: reference },
+        operation.idempotencyKey,
+        false,
+        host,
+      );
+      const data = {
+        identity: runtime.identity,
+        binding: runtime.binding,
+        capture,
+        phase: operation.phase,
+        slot: operation.slot,
+        storeId: operation.storeId,
+        describe(value: T) {
+          const result = value as MemoryInstrumentationResult<unknown>;
+          return { recordCount: result.recordCount, records: result.outputRecords };
+        },
+      };
+      return operation.operationName === "search_memory"
+        ? await input.lifecycle.memory.search(data, execute)
+        : await input.lifecycle.memory.write(data, execute);
     },
   };
-}
-
-function contextFromSpanContext(spanContext: Parameters<typeof trace.wrapSpanContext>[0]): Context {
-  return trace.setSpan(ROOT_CONTEXT, trace.wrapSpanContext(spanContext));
 }
