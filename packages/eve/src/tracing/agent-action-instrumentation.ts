@@ -12,16 +12,16 @@ import type {
   InstrumentationProviderDefinition,
 } from "#instrumentation/lifecycle.js";
 import { actionIdempotencyKey, attemptIdempotencyKey } from "#instrumentation/lifecycle.js";
-import { traceSessionIdOf } from "#tracing/adapters/eve/checkpointer.js";
-import { contentAttribute } from "#tracing/adapters/serialization.js";
-import type { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
+import { traceSessionIdOf } from "#tracing/eve/checkpoint-codec.js";
+import { contentAttribute } from "#tracing/lib/adapters/serialization.js";
+import type { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import type { AgentActionTraceState, AgentTraceStateStore } from "#tracing/agent-trace-state.js";
 import { normalizeChannelAudience } from "#shared/channel-audience.js";
 import { isSampledTrace } from "#shared/trace-policy.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
-import { eveScopeRecord, checkpointContent } from "#tracing/adapters/eve/checkpointer.js";
-import type { ActionOperation } from "#tracing/core/operations.js";
-import type { createTraceRecorder } from "#tracing/core/recorder.js";
+import { eveScopeRecord, checkpointContent } from "#tracing/eve/checkpoint-codec.js";
+import type { ActionOperation } from "#tracing/lib/core/operations.js";
+import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
 
 interface AgentActionInstrumentation {
   readonly events: Pick<

@@ -5,7 +5,7 @@ import {
   type TextMapGetter,
 } from "#compiled/@opentelemetry/api/index.js";
 import { getInstrumentationRuntime } from "#instrumentation/runtime.js";
-import { eveTransportLifecycle } from "#tracing/adapters/eve/transports.js";
+import { eveTransportLifecycle } from "#tracing/eve/transports.js";
 
 export type ChannelRequestTrace = ReturnType<ReturnType<typeof eveTransportLifecycle>["request"]>;
 const headersGetter: TextMapGetter<Headers> = {

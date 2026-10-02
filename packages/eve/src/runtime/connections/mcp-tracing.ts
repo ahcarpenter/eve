@@ -1,5 +1,5 @@
-import { createMcpTraceFetch as traceFetch } from "#tracing/adapters/mcp.js";
-import { eveMcpTracing } from "#tracing/adapters/eve/transports.js";
+import { createMcpTraceFetch as traceFetch } from "#tracing/lib/adapters/mcp.js";
+import { eveMcpTracing } from "#tracing/eve/transports.js";
 import { replaceBaggageMember } from "#protocol/baggage.js";
 
 export function createMcpTraceFetch(input: Parameters<typeof traceFetch>[0]): typeof fetch {

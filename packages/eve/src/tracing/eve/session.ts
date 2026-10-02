@@ -9,7 +9,7 @@ import {
   type InstrumentationSessionTransitionEvent,
   type InstrumentationUsage,
 } from "#instrumentation/lifecycle.js";
-import type { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
+import type { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import { normalizeChannelAudience } from "#shared/channel-audience.js";
 import type { ChannelAudience } from "#shared/channel-audience.js";
 import type { TraceCapturePolicy } from "#tracing/otel-declaration.js";
@@ -20,18 +20,18 @@ import {
 } from "#shared/trace-policy.js";
 import type { AgentSessionTraceState, AgentTraceStateStore } from "#tracing/agent-trace-state.js";
 import { readInstrumentationDecision } from "#shared/instrumentation-decision.js";
-import { eveActivationMetadata } from "#tracing/adapters/eve/metadata.js";
-import { eveScopeRecord } from "#tracing/adapters/eve/checkpointer.js";
+import { eveActivationMetadata } from "#tracing/eve/metadata.js";
+import { eveScopeRecord } from "#tracing/eve/checkpoint-codec.js";
 import type { AgentTurnTraceState } from "#tracing/agent-trace-state.js";
 import { applyPrincipalTraceDecision } from "#instrumentation/principal-summary.js";
 import { normalizeInstrumentationChannelKind } from "#internal/instrumentation.js";
 import type { ConversationEnvironment } from "#shared/conversation-context.js";
-import { traceSessionIdOf } from "#tracing/adapters/eve/checkpointer.js";
+import { traceSessionIdOf } from "#tracing/eve/checkpoint-codec.js";
 import { ROOT_CONTEXT } from "#compiled/@opentelemetry/api/index.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
-import type { TraceLink } from "#tracing/core/types.js";
-import type { createTraceRecorder } from "#tracing/core/recorder.js";
-import { accumulateUsage } from "#tracing/core/usage.js";
+import type { TraceLink } from "#tracing/lib/core/types.js";
+import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
+import { accumulateUsage } from "#tracing/lib/core/usage.js";
 
 interface EveSessionTracingInput {
   readonly lifecycle: ReturnType<typeof createTraceRecorder>;

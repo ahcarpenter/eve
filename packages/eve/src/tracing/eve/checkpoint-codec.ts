@@ -1,5 +1,5 @@
-import type { ScopeData, ScopeRecord } from "#tracing/core/scopes.js";
-import type { TraceLink, TraceReference } from "#tracing/core/types.js";
+import type { ScopeData, ScopeRecord } from "#tracing/lib/core/scopes.js";
+import type { TraceLink, TraceReference } from "#tracing/lib/core/types.js";
 import { resolveConversationId } from "#shared/conversation-identity.js";
 export function traceSessionIdOf(scope: {
   readonly traceSessionId?: string;

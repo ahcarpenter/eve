@@ -7,15 +7,15 @@ import type {
   InstrumentationProviderDefinition,
 } from "#instrumentation/lifecycle.js";
 import type { JsonValue } from "#shared/json.js";
-import { contentAttribute } from "#tracing/adapters/serialization.js";
-import { traceSessionIdOf } from "#tracing/adapters/eve/checkpointer.js";
+import { contentAttribute } from "#tracing/lib/adapters/serialization.js";
+import { traceSessionIdOf } from "#tracing/eve/checkpoint-codec.js";
 import { decodeTraceSessionId } from "#tracing/agent-trace-context-codec.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
 import type { AgentActionContext } from "#tracing/agent-action-instrumentation.js";
-import type { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
+import type { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import { normalizeChannelAudience, type ChannelAudience } from "#shared/channel-audience.js";
-import { eveScopeRecord, checkpointContent } from "#tracing/adapters/eve/checkpointer.js";
-import type { createTraceRecorder } from "#tracing/core/recorder.js";
+import { eveScopeRecord, checkpointContent } from "#tracing/eve/checkpoint-codec.js";
+import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
 
 interface AgentApprovalSpanState {
   readonly traceSessionId: string;

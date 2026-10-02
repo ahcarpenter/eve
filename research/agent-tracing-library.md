@@ -27,7 +27,7 @@ completion outcomes. No second prepared-span durable driver remains.
 
 eve now uses typed recorder handles, corrupt-snapshot recovery, and
 recorder-owned tool correlation. The current internal contract is documented in
-[the library guide](../packages/eve/src/tracing/core/README.md).
+[the library guide](../packages/eve/src/tracing/lib/README.md).
 
 Extract one neutral trace engine. Use the engine in eve before a public release.
 Add an AI SDK adapter for agents that do not use eve.
@@ -273,7 +273,7 @@ Do not add common attributes to span types that do not currently receive them.
 
 | Group            | Attributes                                                                                                                                                   | Applies to                                                            |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| Identity         | `agent.run.id: string`, `agent.trace.schema.version: 1`, `gen_ai.conversation.id: string`                                                                    | Activation, step, model, action, tool, approval, memory.              |
+| Identity         | `agent.run.id: string`, `agent.trace.schema.version: 4`, `gen_ai.conversation.id: string`                                                                    | Activation, step, model, action, tool, approval, memory.              |
 | Naming           | `operation.name: string`, `resource.name: string`                                                                                                            | All except MCP discovery and fallback spans.                          |
 | Framework        | `agent.framework.name: string`, `agent.framework.version: string`                                                                                            | Activation, step, action, approval.                                   |
 | Attempt          | `agent.step.index: number`, `agent.step.attempt: number`, `agent.turn.id: string`                                                                            | Step, action, approval.                                               |
@@ -489,7 +489,8 @@ interface TraceLink {
 }
 ```
 
-The default output uses the neutral attributes above and schema version 1.
+Both neutral and eve output use the library-owned trace schema version 4.
+The output profile does not rewrite this version. Snapshot format versioning is separate.
 Apply overrides to initial attributes, later updates, and root sampler input.
 Preserve IDs, topology, kinds, timestamps, and events. Do not map third-party spans.
 Mappings cannot restore content denied before span creation.
@@ -506,7 +507,7 @@ Keep attribution until deferred span emission finishes.
 
 | Neutral contract                                   | Existing eve output                                                     |
 | -------------------------------------------------- | ----------------------------------------------------------------------- |
-| `agent.trace.schema.version=1`                     | Replace with `agent.trace.schema.version=4`.                            |
+| Library `agent.trace.schema.version=4`             | Preserve version 4 without rewriting it.                                |
 | Link `agent.dispatch`                              | Write `eve.link.type=agent.dispatch`.                                   |
 | Link `channel.request`                             | Write `eve.link.type=channel.request`.                                  |
 | Link `execution.delivery`                          | Write `eve.link.type=workflow.delivery`.                                |
@@ -593,7 +594,7 @@ delegation e2e coverage. Run e2e in CI.
 ## Source contract
 
 - [Activation, step, and model](../packages/eve/src/tracing/agent-otel-provider.ts).
-- [Activation metadata](../packages/eve/src/tracing/adapters/eve/metadata.ts).
+- [Activation metadata](../packages/eve/src/tracing/eve/metadata.ts).
 - [Action](../packages/eve/src/tracing/agent-action-instrumentation.ts).
 - [Tool execution](../packages/eve/src/tracing/agent-tool-instrumentation.ts).
 - [Approval](../packages/eve/src/tracing/agent-approval-instrumentation.ts).

@@ -18,9 +18,9 @@ import type { AgentTraceStateStore } from "#tracing/agent-trace-state.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
 import { isSampledTrace } from "#tracing/sampled-trace.js";
 import type { ConversationEnvironment } from "#shared/conversation-context.js";
-import { eveScopeRecord } from "#tracing/adapters/eve/checkpointer.js";
-import type { MemoryOperation } from "#tracing/core/operations.js";
-import type { createTraceRecorder } from "#tracing/core/recorder.js";
+import { eveScopeRecord } from "#tracing/eve/checkpoint-codec.js";
+import type { MemoryOperation } from "#tracing/lib/core/operations.js";
+import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
 
 type SpanState = { readonly runtime: MemoryOperation; readonly context: Context };
 
@@ -37,7 +37,7 @@ interface AgentMemoryInstrumentation {
 
 export function createAgentMemoryInstrumentation(input: {
   readonly lifecycle: ReturnType<typeof createTraceRecorder>;
-  readonly idGenerator: import("#tracing/adapters/otel-ids.js").AgentSpanIdGenerator;
+  readonly idGenerator: import("#tracing/lib/adapters/otel-ids.js").AgentSpanIdGenerator;
   readonly environment: ConversationEnvironment;
   readonly recordOutputs?: boolean;
   readonly stateStore: AgentTraceStateStore;

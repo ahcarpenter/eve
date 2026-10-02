@@ -7,8 +7,8 @@ import type {
 import { actionIdempotencyKey } from "#instrumentation/lifecycle.js";
 import type { AgentActionContext } from "#tracing/agent-action-instrumentation.js";
 import { resolveConversationId } from "#shared/conversation-identity.js";
-import { traceSessionIdOf } from "#tracing/adapters/eve/checkpointer.js";
-import type { createTraceRecorder } from "#tracing/core/recorder.js";
+import { traceSessionIdOf } from "#tracing/eve/checkpoint-codec.js";
+import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
 
 export function createAgentToolInstrumentation(input: {
   readonly lifecycle: ReturnType<typeof createTraceRecorder>;

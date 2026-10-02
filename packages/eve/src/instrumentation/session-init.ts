@@ -30,7 +30,7 @@ import {
   resolveTracePolicy,
   resolveTracePolicyDecision,
 } from "#tracing/sampled-trace.js";
-import { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
+import { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import { getInstrumentationRuntime } from "#instrumentation/runtime-global.js";
 import type { InstrumentationRuntime } from "#instrumentation/runtime.js";
 

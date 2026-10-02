@@ -26,7 +26,7 @@ import {
   createAgentOtelInstrumentation,
   type AgentOtelInstrumentationInput,
 } from "#tracing/agent-otel-provider.js";
-import { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
+import { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import { ContextAgentTraceStateStore } from "#tracing/agent-trace-context-store.js";
 import type { AgentTraceStateStore } from "#tracing/agent-trace-state.js";
 import { InMemoryAgentTraceStateStore } from "#internal/testing/in-memory-agent-trace-state-store.js";
@@ -44,10 +44,10 @@ import {
 } from "#instrumentation/lifecycle.js";
 import type { ChannelAudience } from "#shared/channel-audience.js";
 import { channelAudienceFromContext } from "#tracing/channel-audience-context.js";
-import { activeTraceOperation } from "#tracing/adapters/otel.js";
+import { activeTraceOperation } from "#tracing/lib/adapters/otel.js";
 import { contentFilteringProcessor } from "#tracing/content-span-processor.js";
 import { parseLocalTraceSegment } from "#tracing/local-trace-reader.js";
-import { CONTENT_ATTRIBUTE_LIMIT } from "#tracing/adapters/serialization.js";
+import { CONTENT_ATTRIBUTE_LIMIT } from "#tracing/lib/adapters/serialization.js";
 import type { TraceCapturePolicy } from "#tracing/otel-declaration.js";
 import type { TraceCaptureContext } from "#shared/trace-policy.js";
 import {

@@ -1,5 +1,5 @@
 import { createContextKey, type Context } from "#compiled/@opentelemetry/api/index.js";
-import { activeTraceOperation } from "#tracing/adapters/otel.js";
+import { activeTraceOperation } from "#tracing/lib/adapters/otel.js";
 
 // OTel context keys use Symbol.for(description), so this marker survives duplicate
 // module evaluations while remaining local to the process and async context.

@@ -1,7 +1,7 @@
 import type { AgentSessionTraceState, AgentTurnTraceState } from "#tracing/agent-trace-state.js";
 import { normalizeInstrumentationChannelKind } from "#internal/instrumentation.js";
-import type { TurnMetadata } from "#tracing/core/scopes.js";
-import { checkpointContent } from "#tracing/adapters/eve/checkpointer.js";
+import type { TurnMetadata } from "#tracing/lib/core/scopes.js";
+import { checkpointContent } from "#tracing/eve/checkpoint-codec.js";
 
 /** Converts eve-owned session metadata to the lifecycle DSL's semantic input. */
 export function eveActivationMetadata(input: {

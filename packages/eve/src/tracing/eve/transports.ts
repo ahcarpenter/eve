@@ -1,9 +1,9 @@
 import { trace, type Tracer } from "#compiled/@opentelemetry/api/index.js";
-import { liveOtelBackend } from "#tracing/adapters/otel.js";
-import { eveOutputMapping } from "#tracing/adapters/eve/compatibility.js";
-import { createTracingRuntime } from "#tracing/core/agent-tracing.js";
-import { eveContentSerializer } from "#tracing/adapters/eve/serializer.js";
-import { createMcpTracing } from "#tracing/adapters/mcp.js";
+import { liveOtelBackend } from "#tracing/lib/adapters/otel.js";
+import { eveOutputMapping } from "#tracing/eve/profile.js";
+import { createTracingRuntime } from "#tracing/lib/core/agent-tracing.js";
+import { eveContentSerializer } from "#tracing/eve/serializer.js";
+import { createMcpTracing } from "#tracing/lib/adapters/mcp.js";
 
 const lifecycles = new WeakMap<Tracer, ReturnType<typeof createTracingRuntime>["lifecycle"]>();
 const mcpAdapters = new WeakMap<Tracer, ReturnType<typeof createMcpTracing>>();

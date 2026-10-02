@@ -23,7 +23,7 @@ import {
   withMcpToolCallSpan,
   withMcpToolsListSpan,
 } from "#runtime/connections/mcp-tracing.js";
-import { liveOtelBackend } from "#tracing/adapters/otel.js";
+import { liveOtelBackend } from "#tracing/lib/adapters/otel.js";
 
 describe("MCP trace propagation", () => {
   let exporter: InMemorySpanExporter;

@@ -1,8 +1,8 @@
-import { createTraceRecorder } from "#tracing/core/recorder.js";
-import { durableOtelBackend } from "#tracing/adapters/otel.js";
-import { eveOutputMapping } from "#tracing/adapters/eve/compatibility.js";
-import { eveContentSerializer } from "#tracing/adapters/eve/serializer.js";
-import type { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
+import { createTraceRecorder } from "#tracing/lib/core/recorder.js";
+import { durableOtelBackend } from "#tracing/lib/adapters/otel.js";
+import { eveOutputMapping } from "#tracing/eve/profile.js";
+import { eveContentSerializer } from "#tracing/eve/serializer.js";
+import type { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import type { Tracer } from "#compiled/@opentelemetry/api/index.js";
 import type { AgentSamplingOperation } from "#tracing/agent-span-contract.js";
 

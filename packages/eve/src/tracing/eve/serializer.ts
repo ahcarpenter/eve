@@ -1,7 +1,7 @@
 import { isUserMessageKind } from "#harness/messages.js";
-import { aiSdkContentSerializer } from "#tracing/adapters/serializer.js";
-import { genAiInputMessagesAttribute } from "#tracing/adapters/serialization.js";
-import type { ContentSerializer } from "#tracing/core/model.js";
+import { aiSdkContentSerializer } from "#tracing/lib/adapters/serializer.js";
+import { genAiInputMessagesAttribute } from "#tracing/lib/adapters/serialization.js";
+import type { ContentSerializer } from "#tracing/lib/core/model.js";
 
 export const eveContentSerializer: ContentSerializer = {
   ...aiSdkContentSerializer,

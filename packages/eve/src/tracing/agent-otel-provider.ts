@@ -8,18 +8,18 @@ import {
 } from "#compiled/@opentelemetry/api/index.js";
 
 import type { AgentTraceStateStore } from "#tracing/agent-trace-state.js";
-import type { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
+import type { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import { createAgentActionInstrumentation } from "#tracing/agent-action-instrumentation.js";
 import { createAgentApprovalInstrumentation } from "#tracing/agent-approval-instrumentation.js";
 import { createAgentChannelDeliveryInstrumentation } from "#tracing/agent-channel-delivery-instrumentation.js";
 import { createAgentToolInstrumentation } from "#tracing/agent-tool-instrumentation.js";
-import { eveActivationMetadata } from "#tracing/adapters/eve/metadata.js";
+import { eveActivationMetadata } from "#tracing/eve/metadata.js";
 import { createAgentMemoryInstrumentation } from "#tracing/agent-memory-instrumentation.js";
-import { readGatewayCostData } from "#tracing/adapters/gateway.js";
-import { createEveSessionTracing } from "#tracing/adapters/eve/session.js";
+import { readGatewayCostData } from "#tracing/lib/adapters/gateway.js";
+import { createEveSessionTracing } from "#tracing/eve/session.js";
 import type { TraceCapturePolicy } from "#tracing/otel-declaration.js";
 import { isSampledTrace } from "#tracing/sampled-trace.js";
-import { createEveCapturePolicy } from "#tracing/adapters/eve/policy.js";
+import { createEveCapturePolicy } from "#tracing/eve/policy.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
 import type {
   InstrumentationStepAttemptMetadataEvent,
@@ -39,9 +39,9 @@ import { attemptIdempotencyKey } from "#instrumentation/lifecycle.js";
 import { type AgentSamplingOperation } from "#tracing/agent-span-contract.js";
 import { resolveInstrumentationEnvironment } from "#internal/application/dev-environment.js";
 import type { ConversationEnvironment } from "#shared/conversation-context.js";
-import { createEveTraceLifecycle } from "#tracing/adapters/eve/scopes.js";
-import { eveScopeRecord } from "#tracing/adapters/eve/checkpointer.js";
-import type { AttemptOperation, ModelOperation } from "#tracing/core/operations.js";
+import { createEveTraceLifecycle } from "#tracing/eve/scopes.js";
+import { eveScopeRecord } from "#tracing/eve/checkpoint-codec.js";
+import type { AttemptOperation, ModelOperation } from "#tracing/lib/core/operations.js";
 
 type SpanState<T = AttemptOperation> = { readonly runtime: T; readonly context: Context };
 
