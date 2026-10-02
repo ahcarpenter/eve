@@ -52,7 +52,7 @@ export function installInstrumentationRuntime(input: {
     otelRuntime = createAgentTracing({
       otel: input.collected.configuration,
       mapping: eveOutputMapping(),
-      serviceName: input.serviceName,
+      agentName: input.serviceName,
     });
     idGenerator = otelRuntime.idGenerator;
     const agentOtel = createAgentOtelInstrumentation({
