@@ -27,8 +27,8 @@ import {
   type InstrumentationStepScope,
 } from "#instrumentation/runtime.js";
 import { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
-import { ContextAgentTraceStateStore } from "#tracing/agent-trace-context-store.js";
-import type { TraceCapturePolicy } from "#tracing/otel-declaration.js";
+import { ContextAgentTraceStateStore } from "#tracing/eve/agent-trace-context-store.js";
+import type { TraceCapturePolicy } from "#tracing/eve/otel-declaration.js";
 import { readForwardedAudienceBaggage, writeForwardedAudienceBaggage } from "#protocol/baggage.js";
 import { ConversationContextKey } from "#shared/conversation-context.js";
 import { captureLogRecords } from "#internal/testing/log-records.js";

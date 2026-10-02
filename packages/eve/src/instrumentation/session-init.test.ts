@@ -12,7 +12,7 @@ import { initializeSessionInstrumentation } from "#instrumentation/session-init.
 import { registerInstrumentationRuntime } from "#instrumentation/runtime-global.js";
 import type { InstrumentationRuntime } from "#instrumentation/runtime.js";
 import { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
-import type { TraceCapturePolicy } from "#tracing/otel-declaration.js";
+import type { TraceCapturePolicy } from "#tracing/eve/otel-declaration.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();

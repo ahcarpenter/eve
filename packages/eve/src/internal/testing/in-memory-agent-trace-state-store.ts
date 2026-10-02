@@ -3,7 +3,7 @@ import type {
   AgentSessionTraceState,
   AgentTraceStateStore,
   AgentTurnTraceState,
-} from "#tracing/agent-trace-state.js";
+} from "#tracing/eve/agent-trace-state.js";
 
 export class InMemoryAgentTraceStateStore implements AgentTraceStateStore {
   readonly #actionAnchors = new Map<string, AgentActionTraceState>();

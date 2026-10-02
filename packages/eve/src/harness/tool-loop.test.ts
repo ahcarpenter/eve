@@ -93,7 +93,7 @@ import {
   type InstrumentationRuntime,
   type SessionInstrumentation,
 } from "#instrumentation/runtime.js";
-import type { RuntimeContextResolver } from "#tracing/otel-declaration.js";
+import type { RuntimeContextResolver } from "#tracing/eve/otel-declaration.js";
 import { captureLogRecords } from "#internal/testing/log-records.js";
 
 // The harness runs outside a workflow body here, where run attributes cannot

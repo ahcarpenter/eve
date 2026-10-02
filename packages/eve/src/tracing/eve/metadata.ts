@@ -1,4 +1,7 @@
-import type { AgentSessionTraceState, AgentTurnTraceState } from "#tracing/agent-trace-state.js";
+import type {
+  AgentSessionTraceState,
+  AgentTurnTraceState,
+} from "#tracing/eve/agent-trace-state.js";
 import { normalizeInstrumentationChannelKind } from "#internal/instrumentation.js";
 import type { TurnMetadata } from "#tracing/lib/core/scopes.js";
 import { checkpointContent } from "#tracing/eve/checkpoint-codec.js";

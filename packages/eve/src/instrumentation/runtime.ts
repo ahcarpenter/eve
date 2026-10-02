@@ -41,7 +41,7 @@ import {
   type PrepareTurnTraceContextInput,
 } from "#instrumentation/prepare-trace-context.js";
 import type { RuntimeTraceContext } from "#protocol/message.js";
-import type { OtelHarnessSettings, RuntimeContextResolver } from "#tracing/otel-declaration.js";
+import type { OtelHarnessSettings, RuntimeContextResolver } from "#tracing/eve/otel-declaration.js";
 import { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import { contextStorage, type ContextContainer } from "#context/container.js";
 import {
@@ -58,7 +58,7 @@ import {
   resolveTracePolicyDecision,
 } from "#shared/trace-policy.js";
 import { readInstrumentationSessionContext } from "#instrumentation/session-context.js";
-import { readSessionTraceDecision } from "#tracing/agent-trace-context-store.js";
+import { readSessionTraceDecision } from "#tracing/eve/agent-trace-context-store.js";
 import { readInstrumentationDecision } from "#shared/instrumentation-decision.js";
 import { applyLiveDeliveryAudienceCeiling } from "#shared/forwarded-trace-policy.js";
 import { readConversationId } from "#shared/conversation-identity.js";

@@ -11,23 +11,26 @@ import {
 } from "#instrumentation/lifecycle.js";
 import { normalizeChannelAudience } from "#shared/channel-audience.js";
 import type { ChannelAudience } from "#shared/channel-audience.js";
-import type { TraceCapturePolicy } from "#tracing/otel-declaration.js";
+import type { TraceCapturePolicy } from "#tracing/eve/otel-declaration.js";
 import {
   isSampledTrace,
   resolveTracePolicy,
   resolveTracePolicyDecision,
 } from "#shared/trace-policy.js";
-import type { AgentSessionTraceState, AgentTraceStateStore } from "#tracing/agent-trace-state.js";
+import type {
+  AgentSessionTraceState,
+  AgentTraceStateStore,
+} from "#tracing/eve/agent-trace-state.js";
 import { readInstrumentationDecision } from "#shared/instrumentation-decision.js";
 import { eveActivationMetadata } from "#tracing/eve/metadata.js";
 import { eveScopeRecord } from "#tracing/eve/checkpoint-codec.js";
-import type { AgentTurnTraceState } from "#tracing/agent-trace-state.js";
+import type { AgentTurnTraceState } from "#tracing/eve/agent-trace-state.js";
 import { applyPrincipalTraceDecision } from "#instrumentation/principal-summary.js";
 import { normalizeInstrumentationChannelKind } from "#internal/instrumentation.js";
 import type { ConversationEnvironment } from "#shared/conversation-context.js";
 import { traceSessionIdOf } from "#tracing/eve/checkpoint-codec.js";
 import { ROOT_CONTEXT } from "#compiled/@opentelemetry/api/index.js";
-import { withChannelAudience } from "#tracing/channel-audience-context.js";
+import { withChannelAudience } from "#tracing/eve/channel-audience-context.js";
 import type { TraceLink } from "#tracing/lib/core/types.js";
 import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
 import { accumulateUsage } from "#tracing/lib/core/usage.js";
