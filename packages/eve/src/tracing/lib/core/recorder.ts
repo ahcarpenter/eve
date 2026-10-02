@@ -23,6 +23,7 @@ import type { ToolCallInput } from "#tracing/lib/core/pending-tool.js";
 import { validSnapshot } from "#tracing/lib/core/snapshot.js";
 import { operationHandle, type RestoredOperation } from "#tracing/lib/core/operations.js";
 import { randomUUID } from "node:crypto";
+import { aroundOperation } from "#tracing/lib/core/pointcut.js";
 
 export interface MemoryPointcutData<T> {
   identity: ScopeIdentity;
@@ -77,41 +78,34 @@ export function createTraceRecorder(input: {
     execute: () => T | PromiseLike<T>,
   ): Promise<T> {
     const active = runtime.active();
-    const handle = await start<"memory">(
-      {
-        identity: data.identity,
-        capture: data.capture ??
-          active?.capture ?? { emit: true, recordInputs: false, recordOutputs: false },
-        binding: data.binding ?? { key: randomUUID(), parent: active?.reference },
-      },
-      {
-        type: "memory",
-        options: { operation, phase: data.phase, slot: data.slot, storeId: data.storeId },
-      },
-    );
-    let completion: Parameters<
-      import("#tracing/lib/core/operations.js").MemoryOperation["complete"]
-    >[0] = { outcome: "completed" };
-    try {
-      const value = await (handle === undefined ? execute() : handle.run(execute, data.capture));
-      let result;
-      try {
-        result = data.describe?.(value);
-      } catch {
-        report();
-      }
-      completion = { outcome: "completed", ...result };
-      return value;
-    } catch (error) {
-      completion = {
+    const begin = () =>
+      start<"memory">(
+        {
+          identity: data.identity,
+          capture: data.capture ??
+            active?.capture ?? { emit: true, recordInputs: false, recordOutputs: false },
+          binding: data.binding ?? { key: randomUUID(), parent: active?.reference },
+        },
+        {
+          type: "memory",
+          options: { operation, phase: data.phase, slot: data.slot, storeId: data.storeId },
+        },
+      );
+    return aroundOperation<
+      T,
+      Parameters<import("#tracing/lib/core/operations.js").MemoryOperation["complete"]>[0]
+    >({
+      start: begin,
+      execute,
+      completed: (value) => ({ outcome: "completed", ...data.describe?.(value) }),
+      failed: (error) => ({
         outcome: "failed",
         errorType: error instanceof Error ? error.name : "_OTHER",
         error,
-      };
-      throw error;
-    } finally {
-      await handle?.complete(completion);
-    }
+      }),
+      fallback: { outcome: "completed" },
+      diagnostic: input.diagnostic,
+    });
   }
   return {
     session(identity: ScopeIdentity, capture: CaptureDecision) {

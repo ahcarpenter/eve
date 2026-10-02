@@ -201,6 +201,85 @@ const sandbox: SandboxSession = {
 };
 
 describe("HarnessAgent consumer instrumentation", () => {
+  it("finalizes every around operation without explicit completion", async () => {
+    const exporter = new InMemorySpanExporter();
+    const tracing = createAgentTracing({
+      agentName: "around-agent",
+      otel: { spanProcessors: [new SimpleSpanProcessor(exporter)] },
+    });
+    try {
+      const value = await tracing.turn(
+        { identity: { conversationId: "around", runId: "around", turnId: "turn" }, sequence: 0 },
+        (turn) =>
+          turn!.attempt({ stepIndex: 0, attempt: 0 }, async (attempt) => {
+            await attempt.modelCall(
+              {
+                provider: "provider",
+                modelId: "model",
+                describe: () => ({
+                  outcome: "completed" as const,
+                  result: { finishReason: "stop", usage: { inputTokens: 3 } },
+                }),
+              },
+              async () => "answer",
+            );
+            return attempt.action({ callId: "lookup", name: "lookup" }, async (action) => {
+              await action.approval(
+                {
+                  requestId: "approval",
+                  describe: (accepted) => ({ outcome: accepted ? "approved" : "denied" }),
+                },
+                async () => true,
+              );
+              return action.toolExecution({}, async () =>
+                tracing.mcp.call(
+                  { connectionName: "catalog", toolName: "lookup" },
+                  async () => "original",
+                ),
+              );
+            });
+          }),
+      );
+      expect(value).toBe("original");
+      await tracing.request({ method: "GET", route: "/test" }, async () => ({ status: 200 }));
+      await tracing.mcp.list({ connectionName: "catalog" }, async () => []);
+      const spans = exporter.getFinishedSpans();
+      expect(spans.map((span) => span.name).sort()).toEqual(
+        [
+          "agent.action",
+          "agent.approval",
+          "agent.channel.request",
+          "agent.step",
+          "chat model",
+          "execute_tool lookup",
+          "invoke_agent around-agent",
+          "tools/list",
+        ].sort(),
+      );
+      expect(
+        spans.find((span) => span.name === "agent.approval")?.attributes["agent.approval.outcome"],
+      ).toBe("approved");
+      const failure = new TypeError("original");
+      await expect(
+        tracing.turn(
+          {
+            identity: { conversationId: "around", runId: "failed", turnId: "failed" },
+            sequence: 0,
+          },
+          (turn) =>
+            turn!.attempt({ stepIndex: 0, attempt: 0 }, async () => {
+              throw failure;
+            }),
+        ),
+      ).rejects.toBe(failure);
+      expect(exporter.getFinishedSpans().filter((span) => span.status.code === 2)).toHaveLength(2);
+    } finally {
+      await tracing.shutdown();
+      trace.disable();
+      propagation.disable();
+      context.disable();
+    }
+  });
   it("finalizes memory pointcuts and preserves application values and errors", async () => {
     const exporter = new InMemorySpanExporter();
     const tracing = createAgentTracing({

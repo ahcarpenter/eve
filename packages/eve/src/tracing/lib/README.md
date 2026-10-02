@@ -80,6 +80,55 @@ Optional handles let the application continue execution.
 
 ## Run and complete operations
 
+Supply execution as the second argument to use an around pointcut. The library
+activates context and completes each span in `finally`:
+
+```ts
+const result = await tracing.turn({ identity, sequence: 0 }, (turn) =>
+  turn!.attempt({ stepIndex: 0, attempt: 0 }, (attempt) =>
+    attempt.action({ callId: "lookup-1", name: "lookup" }, (action) =>
+      action.toolExecution({}, () => lookup()),
+    ),
+  ),
+);
+```
+
+Turns, attempts, actions, approvals, tools, model calls, and memory handles
+accept around execution. Supply a `describe` function in metadata to record
+domain results. Model-call pointcuts require a description with the finish
+reason and usage. Approval descriptions select approved or denied outcomes.
+
+```ts
+await attempt.modelCall(
+  {
+    provider: "example-provider",
+    modelId: "example-model",
+    describe: (result) => ({ outcome: "completed" as const, result }),
+  },
+  () => callModel(),
+);
+
+await action.approval(
+  {
+    requestId: "approval-1",
+    describe: (accepted) => ({ outcome: accepted ? "approved" : "denied" }),
+  },
+  () => requestApproval(),
+);
+
+await tracing.request({ method: "GET", route: "/customers" }, () => handleRequest());
+await tracing.mcp.list({ connectionName: "catalog" }, () => client.listTools());
+await tracing.mcp.call({ connectionName: "catalog", toolName: "lookup" }, () => client.callTool());
+```
+
+Around pointcuts return the original result and rethrow the original error.
+Result-description and completion failures preserve application results.
+MCP calls inside an active tool attach their data to that tool span.
+Complete streaming work inside the execution function before it returns.
+
+For work completed by another worker, create a handle with one argument and
+complete that handle when the terminal event arrives.
+
 Call `run()` to make an operation's context active. HTTP and database spans
 created during execution can use that operation as their parent.
 
