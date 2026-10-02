@@ -157,6 +157,7 @@ async function converse(
           };
         },
         attachSession: unsupported("attachSession"),
+        describe: unsupported("describe"),
         params: {},
         requestIp: null,
         to: unsupported("to"),
