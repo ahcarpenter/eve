@@ -37,9 +37,10 @@ import {
 import { topologyScope } from "#tracing/core/topology.js";
 import { mcpLifecycle } from "#tracing/core/mcp.js";
 import { intersectCapture } from "#tracing/core/activation.js";
-import { pendingTool } from "#tracing/core/pending-tool.js";
+import { pendingTool, toolCallRecord, type ToolCallInput } from "#tracing/core/pending-tool.js";
 import { accumulateUsage } from "#tracing/core/usage.js";
 import { snapshotRecord } from "#tracing/core/snapshot.js";
+import { boundedSerializer } from "#tracing/core/serializer.js";
 import { withoutDeclinedContent } from "#tracing/core/content-policy.js";
 export { scopeRuntime } from "#tracing/core/topology.js";
 
@@ -53,65 +54,22 @@ export type {
   ApprovalOptions,
   MemoryOptions,
 } from "#tracing/core/scope-lifecycle.js";
-import type {
-  ModelOptions,
-  ActionOptions,
-  ApprovalOptions,
-  MemoryOptions,
-} from "#tracing/core/scope-lifecycle.js";
 export type ModelResult = Parameters<typeof modelResultAttributes>[0];
 export type { MemoryResult } from "#tracing/core/scope-lifecycle.js";
-import type { MemoryResult } from "#tracing/core/scope-lifecycle.js";
+export type {
+  TurnScope,
+  StepScope,
+  ActionScope,
+  ActionResult,
+  ToolResult,
+} from "#tracing/core/application.js";
+import type { TurnScope, StepScope, ActionScope } from "#tracing/core/application.js";
 
-export interface TurnScope {
-  attempt<T>(
-    options: { stepIndex: number; attempt: number },
-    execute: (step: StepScope) => Promise<T>,
-  ): Promise<T>;
-  memory<T>(options: MemoryOptions, execute: () => Promise<MemoryResult<T>>): Promise<T>;
-}
-export interface StepScope {
-  modelCall<T>(
-    options: ModelOptions,
-    execute: () => Promise<T>,
-    result: (value: T) => ModelResult,
-  ): Promise<T>;
-  action<T>(
-    options: ActionOptions,
-    execute: (action: ActionScope) => Promise<T>,
-    describe: (value: T) => ActionResult,
-  ): Promise<T>;
-  memory<T>(options: MemoryOptions, execute: () => Promise<MemoryResult<T>>): Promise<T>;
-}
-export interface ActionScope {
-  toolExecution<T>(
-    input: { executionId: string },
-    execute: () => Promise<T>,
-    describe: (value: T) => ToolResult,
-  ): Promise<T>;
-  approval<T>(
-    options: ApprovalOptions,
-    execute: () => Promise<T>,
-    outcome: (value: T) => { outcome: "approved" | "denied" | "cancelled" },
-  ): Promise<T>;
-  memory<T>(options: MemoryOptions, execute: () => Promise<MemoryResult<T>>): Promise<T>;
-}
-export type ToolResult =
-  | { outcome: "completed"; output?: unknown }
-  | { outcome: "failed"; errorType: string; error?: unknown };
-export type ActionResult = ToolResult | { outcome: "rejected" | "cancelled" };
+export type { ScopeData, ScopeRecord } from "#tracing/core/scope-lifecycle.js";
+import type { ScopeData, ScopeRecord } from "#tracing/core/scope-lifecycle.js";
 
-export type { ScopeData } from "#tracing/core/scope-lifecycle.js";
-import type { ScopeData } from "#tracing/core/scope-lifecycle.js";
-
-export type { ScopeRecord } from "#tracing/core/scope-lifecycle.js";
-import type { ScopeRecord } from "#tracing/core/scope-lifecycle.js";
-
-export type { RuntimeBinding, ScopeTerminal } from "#tracing/core/scope-lifecycle.js";
-import type { RuntimeBinding } from "#tracing/core/scope-lifecycle.js";
-
-export type { RuntimeScope } from "#tracing/core/scope-lifecycle.js";
-import type { RuntimeScope } from "#tracing/core/scope-lifecycle.js";
+export type { RuntimeBinding, ScopeTerminal, RuntimeScope } from "#tracing/core/scope-lifecycle.js";
+import type { RuntimeBinding, RuntimeScope } from "#tracing/core/scope-lifecycle.js";
 
 export function createTraceLifecycle(input: {
   readonly backend: TraceBackend | DurableTraceBackend;
@@ -120,8 +78,10 @@ export function createTraceLifecycle(input: {
   readonly diagnostic?: (code: string) => void;
   readonly mapIdentity?: (identity: ScopeIdentity) => Attributes;
 }) {
+  input = { ...input, serializer: boundedSerializer(input.serializer, input.diagnostic) };
   const engine = createTraceEngine(input);
   const backend = input.backend;
+  const serializer = input.serializer;
   if (input.mode === "durable" && !("reserveActivation" in backend))
     throw new Error("Durable tracing requires reserved-ID backend support.");
   let counter = 0;
@@ -158,18 +118,7 @@ export function createTraceLifecycle(input: {
             recordInputs: capture.recordInputs && saved.capture.recordInputs,
             recordOutputs: capture.recordOutputs && saved.capture.recordOutputs,
           };
-    let actualData = snapshotRecord(
-      {
-        key,
-        identity: actualIdentity,
-        data: saved?.data ?? data,
-        capture: actualCapture,
-        reference: saved?.reference ??
-          binding?.reference ?? { traceId: "0".repeat(32), spanId: "0".repeat(16), traceFlags: 0 },
-        startTimeMs,
-      },
-      input.serializer,
-    ).data;
+    let actualData = capturedData(saved?.data ?? data, actualCapture);
     const actualAttempt = saved?.attempt ?? attempt;
     const links = saved?.links ?? binding?.links;
     let prepared = prepare(
@@ -618,11 +567,29 @@ export function createTraceLifecycle(input: {
 
   return {
     active: () => backend.active?.(),
+    toolCall(input: ToolCallInput) {
+      return pendingTool({
+        serializer,
+        record: toolCallRecord(input, backend),
+        backend,
+        executionContext: input.executionContext,
+        resolve: (record, options) =>
+          construct(record.identity, record.capture, record.data, undefined, record.attempt, {
+            key: record.key,
+            reference: record.reference,
+            parent: record.parent,
+            startTimeMs: record.startTimeMs,
+            executionContext: options.executionContext,
+            outputContext: record.outputContext,
+          }),
+      });
+    },
     pendingTool(
       record: ScopeRecord,
       options: { executionContext?: import("#tracing/core/types.js").ExecutionContext } = {},
     ) {
       return pendingTool({
+        serializer,
         record,
         backend,
         executionContext: options.executionContext,

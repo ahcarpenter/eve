@@ -7,9 +7,52 @@ import type {
 } from "#tracing/core/types.js";
 import type { McpUpdate } from "#tracing/core/mcp.js";
 import { intersectCapture } from "#tracing/core/activation.js";
+import { snapshotRecord } from "#tracing/core/snapshot.js";
+import type { ContentSerializer } from "#tracing/core/model.js";
+import type { ScopeIdentity } from "#tracing/core/scope-lifecycle.js";
+import type { DurableTraceBackend } from "#tracing/core/types.js";
+
+export interface ToolCallInput {
+  identity: ScopeIdentity;
+  executionKey: string;
+  actionKey: string;
+  name: string;
+  callId: string;
+  arguments?: unknown;
+  fallback: TraceReference;
+  capture: CaptureDecision;
+  executionContext?: ExecutionContext;
+  outputContext?: Readonly<Record<string, string>>;
+}
+
+export function toolCallRecord(
+  input: ToolCallInput,
+  backend: TraceBackend | DurableTraceBackend,
+): ScopeRecord {
+  if (!("reserveReference" in backend))
+    throw new Error("Tool binding requires reserved-ID support.");
+  return {
+    key: input.executionKey,
+    identity: input.identity,
+    reference: backend.reserveReference({
+      key: input.executionKey,
+      parent: input.fallback,
+      traceFlags: input.fallback.traceFlags,
+    }),
+    parent: input.fallback,
+    data: {
+      type: "tool",
+      options: { callId: input.callId, name: input.name, arguments: input.arguments },
+    },
+    capture: input.capture,
+    startTimeMs: Date.now(),
+    outputContext: input.outputContext,
+  };
+}
 
 export function pendingTool(input: {
   readonly record: ScopeRecord;
+  readonly serializer: ContentSerializer;
   readonly backend: TraceBackend;
   readonly resolve: (
     record: ScopeRecord,
@@ -17,6 +60,7 @@ export function pendingTool(input: {
   ) => Promise<RuntimeScope>;
   readonly executionContext?: ExecutionContext;
 }) {
+  input = { ...input, record: snapshotRecord(input.record, input.serializer) };
   let scope: RuntimeScope | undefined;
   let attaching: Promise<RuntimeScope> | undefined;
   let terminal: ScopeTerminal | undefined;

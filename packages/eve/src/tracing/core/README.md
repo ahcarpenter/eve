@@ -1,135 +1,76 @@
-# Agent trace scopes
+# Agent tracing
 
-This internal library constructs agent trace topology. It owns span names,
-attributes, parent relationships, content projection, and terminal events.
-The application supplies semantic data and callbacks, not OTel attributes.
-These modules are not public package exports.
+This internal library owns trace topology, attributes, context activation, and
+completion. These modules are not public package exports.
 
-`tracing.lifecycle` is the lower-level API. Construct a turn, then its children,
-and report `started()`, `completed()`, or `failed()`. The callback DSL delegates
-to those same lifecycle operations. SDK and eve event bindings use lifecycle
-directly. The backend carries opaque host context without exposing raw spans.
+## Application tracing
 
-## Callback DSL
-
-Install an OTel provider and async context manager first. The library does not
-replace process-wide OTel setup.
+Install an OTel provider and context manager first. SDK setup selects its own
+serializer and telemetry binding:
 
 ```ts
-import { createAgentTracing } from "#tracing/core/index.js";
-import { liveOtelBackend, aiSdkContentSerializer } from "#tracing/adapters/index.js";
-
-const tracing = createAgentTracing({
-  agentName: "support",
-  framework: { name: "custom-agent", version: "1.0" },
-  adapter: {
-    backend: liveOtelBackend(tracer),
-    serializer: aiSdkContentSerializer,
-    integrations: { aiSdk: aiSdkTracing },
-  },
+const tracing = createAiSdkTracing({
+  agent: { name: "support" },
+  output: liveOtelBackend(tracer),
+  content: { inputs: false, outputs: false },
+  integrations: existingTelemetry,
 });
 
-await tracing.turn({ conversationId, runId, turnId, sequence: 0 }, async (turn) => {
-  await turn.step({ index: 0 }, async (step) => {
-    const response = await step.model({ provider, modelId }, callModel, modelResult);
-    return await step.action({ callId, name: "lookup" }, async (action) => {
-      await action.approval({ requestId }, requestApproval);
-      return await action.tool(executeLookup);
-    });
-  });
+await tracing.turn(turnInput, async (turn) => {
+  return generateText({ model, messages, tools, telemetry: tracing.telemetry(turn) });
 });
 ```
 
-A turn can construct steps. A step can construct models and actions. An action
-can construct tools and approvals. Each constructor controls its child's parent
-and lifetime. Memory operations can run in turn, step, and action scopes.
-No authoring scope exposes a span, attribute map, checkpoint, or resume method.
-`createAgentTracing` is the only construction entry point. Supply backend,
-serializer, and SDK integrations through its `adapter` option. The library index
-does not export span builders, attribute helpers, or raw emission operations.
+The application object does not expose runtime recording or transport methods.
+Consume streams and await child work inside the callback. The library does not
+retry callbacks or consume streams on the application's behalf.
 
-`modelResult` converts the application's model result into semantic usage,
-response identity, finish reason, and permitted response parts. The callback's
-return value passes through unchanged. Failed callbacks keep the original error.
-
-Content capture is off by default. Set `content.recordInputs` and
-`content.recordOutputs` separately. A delegated activation starts a fresh trace
-and links only its first turn to the caller. Related activations retain the
-same conversation identity.
-
-## SDK hooks
-
-Configure the SDK adapter in `createAgentTracing`. Its hooks construct the same
-scopes internally. Application code needs only the turn callback:
+Manual tracing uses `turn.attempt`, `attempt.modelCall`, `attempt.action`,
+`action.toolExecution`, and `action.approval`. Result descriptions are required
+for domain outcomes. A resolved approval callback does not imply acceptance:
 
 ```ts
-await tracing.turn({ conversationId, runId, turnId, sequence: 0 }, async (turn) => {
-  return await generateText({
-    model,
-    messages,
-    tools,
-    telemetry: tracing.integrations.aiSdk(turn),
-  });
-});
+await action.approval({ requestId }, requestApproval, (accepted) => ({
+  outcome: accepted ? "approved" : "denied",
+}));
 ```
 
-Consume streaming responses inside the callback. Do not return an unconsumed
-stream or detach child work. Physical SDK retries have separate model spans.
-Unrelated integrations can pass through `aiSdkTracing(turn, { integrations })`.
-Do not install a second integration that records the same model or tool spans.
+Callbacks retain their original return values. Description and completion errors
+do not replace successful callback results. Thrown application errors retain
+their original identity. API attempts still emit `agent.step` spans.
 
-## Runtime persistence
+## Runtime recording
 
-Configure `checkpointer` once with a `TraceCheckpointer` adapter. The lifecycle saves
-serializable scope state through `load`, `save`, and `remove`. The adapter joins
-that state to the runtime's existing checkpoint. It does not create a separate
-workflow checkpoint.
+Create `createTraceRecorder` separately with an explicit `live` or `durable` mode.
+Durable mode requires reserved-ID support at construction. Operation-specific
+handles expose `complete` with discriminated outcomes. Model handles do not expose
+approval or tool constructors.
 
-Runtime bindings supply stable keys for operations that cross workers. The
-callback DSL remains unchanged. Internal runtime scopes can restore state by
-key and accept a terminal event in another worker. Only the application runtime
-controls suspension, retry, and replay. Tracing never reruns callbacks itself.
+The runtime calls `snapshot()` and persists the detached state in its existing
+checkpoint transaction. `restore(snapshot, ceiling)` reconstructs that state
+without replaying application callbacks. Tracing does not load, save, or remove
+workflow records. A store does not determine span lifetime.
 
-Persistence requires a backend with reserved-ID support. Restore preserves
-parent identity, start time, capture ceiling, and operation metadata. Denied
-content does not enter persisted state. The caller serializes state changes for
-one operation key and owns export deduplication.
+Snapshots have version 1 and omit denied payloads. Serialization is bounded;
+oversized or malformed content is omitted. Capture permissions can decrease but
+cannot increase. A later local decrease cannot remove already exported or
+committed content. The runtime owns concurrent writes and export deduplication.
 
-The integration layer uses the same runtime scope constructors. It projects existing
-turn, action, and approval records into semantic bindings. Existing workflow
-state remains the sole persistence owner; no second checkpoint tree is added.
+eve's internal codec retains its existing checkpoint formats. During migration,
+the private runtime binding still uses generic lifecycle handles; those are not
+part of the application surface. Tool-call bindings accept semantic input and
+reserve references internally rather than requiring eve to build tool records.
 
-Use `lifecycle.resolve(record, { executionContext })` to reconstruct a semantic
-checkpoint record from an external runtime. Record conversion belongs in the
-checkpointer adapter. Construct ordinary children directly from the resolved
-parent; the lifecycle inherits attempt and output context automatically.
+## Output and protocol bindings
 
-Transport adapters use `tracing.lifecycle.request()` or `.mcp()`.
-`lifecycle.active()` identifies the semantic operation during `scope.run()` and
-callback execution. The OTel adapter carries that operation across async calls.
-Activation intersects capture permissions; nested adapters cannot broaden them.
-Configure the MCP adapter through `adapter.mcp: createMcpTracing` and use
-`tracing.mcpAdapter` for discovery and calls. It enriches an active tool instead
-of creating a duplicate MCP call span.
+SDK, request, and MCP bindings use the same operation implementation. MCP reuses
+an active tool operation instead of adding a duplicate call span. Protocol data
+passes through semantic methods, never attribute maps.
 
-`lifecycle.pendingTool(record)` retains semantic updates while the runtime finds
-the action parent. Attach that parent before emission, or drain with the recorded
-fallback parent. Existing host records remain the checkpoint authority.
-They supply protocol data, not span names or OTel options. The backend remains
-the only component that starts OTel spans.
+Neutral output uses schema version 1. The private eve profile retains schema
+version 4, existing link keys, and Vercel session attribution. Profiles cannot
+change span names or link references, or restore denied content. Portable
+references preserve W3C tracestate.
 
-## Compatibility and transports
-
-Neutral output uses schema version 1. The optional eve output profile retains
-schema version 4, existing link keys, and Vercel session attribution. Apply output
-mapping before destination filtering. A profile cannot restore denied content.
-Profiles translate only attributes and link attributes; span names and link
-references cannot change. Portable references serialize W3C tracestate.
-
-Request and MCP transport tracing are separate entry points. Pass route templates,
-not user-supplied URLs. Enrich the active tool scope instead of creating a second
-MCP call span when the tool already owns execution. Enrichment uses `scope.mcp`
-methods for protocol metadata, arguments, results, and errors, never attribute maps.
-
-Agent Runs export, remote protocol authorization, and global registration remain
-outside scope construction.
+Global registration, trusted policy, workflow ownership, destination filtering,
+local storage, and Agent Runs request-context export stay outside the recorder.
