@@ -1,1 +1,1 @@
-export { recordAgentSpanError } from "#tracing/adapters/otel-error.js";
+export { recordAgentSpanError } from "#tracing/lib/adapters/otel-error.js";

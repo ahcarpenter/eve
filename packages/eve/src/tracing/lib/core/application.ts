@@ -1,0 +1,73 @@
+import type {
+  ActionOptions,
+  ApprovalOptions,
+  MemoryOptions,
+  ModelOptions,
+} from "#tracing/lib/core/scope-lifecycle.js";
+import type { ModelResult } from "#tracing/lib/core/scopes.js";
+import type { MemoryResult } from "#tracing/lib/core/scope-lifecycle.js";
+
+export interface TurnScope {
+  attempt<T>(
+    options: { stepIndex: number; attempt: number },
+    execute: (attempt: StepScope) => Promise<T>,
+  ): Promise<T>;
+  searchMemory<T>(
+    options: Omit<MemoryOptions, "operation">,
+    execute: () => Promise<T>,
+    describe: (value: T) => Omit<MemoryResult<T>, "value">,
+  ): Promise<T>;
+  writeMemory<T>(
+    options: Omit<MemoryOptions, "operation">,
+    execute: () => Promise<T>,
+    describe: (value: T) => Omit<MemoryResult<T>, "value">,
+  ): Promise<T>;
+}
+export interface StepScope {
+  modelCall<T>(
+    options: ModelOptions,
+    execute: () => Promise<T>,
+    describe: (value: T) => ModelResult,
+  ): Promise<T>;
+  action<T>(
+    options: ActionOptions,
+    execute: (action: ActionScope) => Promise<T>,
+    describe: (value: T) => ActionResult,
+  ): Promise<T>;
+  searchMemory<T>(
+    options: Omit<MemoryOptions, "operation">,
+    execute: () => Promise<T>,
+    describe: (value: T) => Omit<MemoryResult<T>, "value">,
+  ): Promise<T>;
+  writeMemory<T>(
+    options: Omit<MemoryOptions, "operation">,
+    execute: () => Promise<T>,
+    describe: (value: T) => Omit<MemoryResult<T>, "value">,
+  ): Promise<T>;
+}
+export interface ActionScope {
+  toolExecution<T>(
+    input: { executionId: string },
+    execute: () => Promise<T>,
+    describe: (value: T) => ToolResult,
+  ): Promise<T>;
+  approval<T>(
+    options: ApprovalOptions,
+    execute: () => Promise<T>,
+    describe: (value: T) => { outcome: "approved" | "denied" | "cancelled" },
+  ): Promise<T>;
+  searchMemory<T>(
+    options: Omit<MemoryOptions, "operation">,
+    execute: () => Promise<T>,
+    describe: (value: T) => Omit<MemoryResult<T>, "value">,
+  ): Promise<T>;
+  writeMemory<T>(
+    options: Omit<MemoryOptions, "operation">,
+    execute: () => Promise<T>,
+    describe: (value: T) => Omit<MemoryResult<T>, "value">,
+  ): Promise<T>;
+}
+export type ToolResult =
+  | { outcome: "completed"; output?: unknown }
+  | { outcome: "failed"; errorType: string; error?: unknown };
+export type ActionResult = ToolResult | { outcome: "rejected" | "cancelled" };

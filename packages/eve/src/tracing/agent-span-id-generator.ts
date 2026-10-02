@@ -1,1 +1,1 @@
-export { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
+export { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
