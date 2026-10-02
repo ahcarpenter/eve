@@ -1,6 +1,9 @@
 import {
   createMcpHandler,
   McpServer,
+  type McpJsonObject,
+  type McpRequestHandlerExtra,
+  type McpServerOptions,
   type McpToolAnnotations,
   type StandardSchemaWithJSON,
 } from "#compiled/@modelcontextprotocol/server/index.js";
@@ -31,6 +34,21 @@ export interface McpCallToolResult<
   readonly content: readonly McpContent[];
   readonly isError?: boolean;
   readonly structuredContent?: TStructured | McpToolOperationErrorEnvelope;
+}
+
+/** An MCP 2026-07-28 `input_required` result: the client retries with the answers. */
+export interface McpInputRequiredResult {
+  readonly _meta?: McpJsonObject;
+  readonly inputRequests: McpJsonObject;
+  readonly requestState: string;
+  readonly resultType: "input_required";
+}
+
+/** What one tool handler sees of its request. */
+export interface McpToolCallContext {
+  readonly auth: SessionAuthContext | null;
+  readonly request: McpRequestHandlerExtra["mcpReq"];
+  readonly signal: AbortSignal;
 }
 
 export interface McpToolOperationErrorEnvelope {
@@ -93,8 +111,8 @@ export function defineMcpTool<
   readonly definition: McpToolDefinition<TInputSchema>;
   call(
     value: InferSchemaOutput<TInputSchema>,
-    context: { readonly auth: SessionAuthContext | null; readonly signal: AbortSignal },
-  ): Promise<McpCallToolResult<TStructured>>;
+    context: McpToolCallContext,
+  ): Promise<McpCallToolResult<TStructured> | McpInputRequiredResult>;
 }): McpServerTool {
   return {
     name: input.definition.name,
@@ -114,12 +132,11 @@ export function defineMcpTool<
             : { outputSchema: input.definition.outputSchema }),
         },
         async (value, context) =>
-          await callTool(
-            input.call,
-            value as InferSchemaOutput<TInputSchema>,
-            context.mcpReq.signal,
+          await callTool(input.call, value as InferSchemaOutput<TInputSchema>, {
             auth,
-          ),
+            request: context.mcpReq,
+            signal: context.mcpReq.signal,
+          }),
       );
     },
   };
@@ -131,6 +148,8 @@ interface McpStreamableHttpServerOptions {
   /** Server-level usage guidance returned from `initialize` and `server/discover`. */
   readonly instructions?: string;
   readonly tools: readonly McpServerTool[];
+  /** Checks an echoed `requestState` before any handler runs; a throw answers `-32602`. */
+  readonly verifyRequestState?: (state: string, ctx: McpRequestHandlerExtra) => Promise<unknown>;
   authenticate(request: Request): Promise<SessionAuthContext | null | Response>;
 }
 
@@ -338,14 +357,25 @@ function readJsonRpcRequestId(body: unknown): string | number | null {
 }
 
 function createServer(
-  options: Pick<McpStreamableHttpServerOptions, "instructions" | "name" | "version">,
+  options: Pick<
+    McpStreamableHttpServerOptions,
+    "instructions" | "name" | "verifyRequestState" | "version"
+  >,
   tools: ReadonlyMap<string, McpServerTool>,
   auth: SessionAuthContext | null,
 ): McpServer {
-  const serverOptions: { capabilities: Record<string, unknown>; instructions?: string } = {
+  const serverOptions: { -readonly [K in keyof McpServerOptions]: McpServerOptions[K] } = {
     capabilities: { tools: { listChanged: false } },
   };
   if (options.instructions !== undefined) serverOptions.instructions = options.instructions;
+  // Without a hook the SDK hands handlers the raw, unverified string.
+  serverOptions.requestState = {
+    verify:
+      options.verifyRequestState ??
+      (() => {
+        throw new Error("This server mints no requestState.");
+      }),
+  };
   const server = new McpServer({ name: options.name, version: options.version }, serverOptions);
 
   for (const tool of tools.values()) tool.register(server, auth);
@@ -356,14 +386,13 @@ function createServer(
 async function callTool<TInput, TStructured extends Readonly<Record<string, unknown>>>(
   call: (
     input: TInput,
-    context: { readonly auth: SessionAuthContext | null; readonly signal: AbortSignal },
-  ) => Promise<McpCallToolResult<TStructured>>,
+    context: McpToolCallContext,
+  ) => Promise<McpCallToolResult<TStructured> | McpInputRequiredResult>,
   input: TInput,
-  signal: AbortSignal,
-  auth: SessionAuthContext | null,
-): Promise<McpCallToolResult<TStructured>> {
+  context: McpToolCallContext,
+): Promise<McpCallToolResult<TStructured> | McpInputRequiredResult> {
   try {
-    return await call(input, { auth, signal });
+    return await call(input, context);
   } catch (error) {
     if (error instanceof McpToolOperationError) {
       return toolError({
