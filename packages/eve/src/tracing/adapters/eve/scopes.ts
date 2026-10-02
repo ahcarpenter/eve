@@ -1,4 +1,4 @@
-import { createAgentTracing } from "#tracing/core/agent-tracing.js";
+import { createTracingRuntime } from "#tracing/core/agent-tracing.js";
 import { durableOtelBackend } from "#tracing/adapters/otel.js";
 import { eveOutputMapping } from "#tracing/adapters/eve/compatibility.js";
 import { eveContentSerializer } from "#tracing/adapters/eve/serializer.js";
@@ -11,7 +11,7 @@ export function createEveTraceLifecycle(input: {
   readonly idGenerator: AgentSpanIdGenerator;
   readonly samplesTrace?: (traceId: string, operation?: AgentSamplingOperation) => boolean;
 }) {
-  return createAgentTracing({
+  return createTracingRuntime({
     adapter: {
       serializer: eveContentSerializer,
       backend: durableOtelBackend({

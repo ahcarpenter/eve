@@ -6,10 +6,11 @@ import type {
 } from "#instrumentation/lifecycle.js";
 import { actionIdempotencyKey } from "#instrumentation/lifecycle.js";
 import type { AgentActionContext } from "#tracing/agent-action-instrumentation.js";
-import { eveScopeRecord } from "#tracing/adapters/eve/checkpointer.js";
+import { resolveConversationId } from "#shared/conversation-identity.js";
+import { traceSessionIdOf } from "#tracing/adapters/eve/checkpointer.js";
 import type { AgentTracing } from "#tracing/core/agent-tracing.js";
 
-type PendingTool = ReturnType<AgentTracing["lifecycle"]["pendingTool"]>;
+type PendingTool = ReturnType<AgentTracing["lifecycle"]["toolCall"]>;
 interface ToolState {
   readonly actionKey: string;
   readonly event: InstrumentationToolCallStartedEvent;
@@ -51,41 +52,34 @@ export function createAgentToolInstrumentation(input: {
       input.resolveFallback(event) ??
       (await input.actionContextFor(event.scope.sessionId, event.scope.turnId, event.callId));
     if (fallback === undefined) return;
-    const record = eveScopeRecord(
-      {
-        ...event.scope,
-        frameworkVersion: "",
-        parent: fallback.spanContext,
-        reference: input.lifecycle.reserve({
-          key: `tool:${event.idempotencyKey}`,
-          parent: fallback.spanContext,
-          traceFlags: fallback.spanContext.traceFlags,
-        }),
-      },
-      event.idempotencyKey,
-      {
-        type: "tool",
-        options: {
-          callId: event.callId,
-          name: event.toolName,
-          arguments: input.recordInputs ? event.input : undefined,
-        },
-      },
-    );
     const state: ToolState = {
       actionKey: actionIdempotencyKey(event.scope.sessionId, event.scope.turnId, event.callId),
       event,
-      operation: input.lifecycle.pendingTool(
-        {
-          ...record,
-          capture: {
-            ...record.capture,
-            recordInputs: input.recordInputs,
-            recordOutputs: input.recordOutputs,
-          },
+      operation: input.lifecycle.toolCall({
+        identity: {
+          conversationId: resolveConversationId(event.scope.rootSessionId ?? event.scope.sessionId),
+          runId: event.scope.sessionId,
+          turnId: event.scope.turnId,
+          agentName: event.scope.functionId,
+          framework: { name: "eve", version: "" },
         },
-        { executionContext: fallback.context },
-      ),
+        executionKey: `tool:${event.idempotencyKey}`,
+        actionKey: actionIdempotencyKey(event.scope.sessionId, event.scope.turnId, event.callId),
+        callId: event.callId,
+        name: event.toolName,
+        arguments: input.recordInputs ? event.input : undefined,
+        fallback: fallback.spanContext,
+        capture: {
+          emit: (fallback.spanContext.traceFlags & 1) !== 0,
+          recordInputs: input.recordInputs,
+          recordOutputs: input.recordOutputs,
+        },
+        executionContext: fallback.context,
+        outputContext: {
+          traceSessionId: traceSessionIdOf(event.scope),
+          platform: process.env.VERCEL_ENV === undefined ? "other" : "vercel",
+        },
+      }),
     };
     const states = byAttempt.get(event.scope.attemptId) ?? new Map<string, ToolState>();
     states.set(event.idempotencyKey, state);
