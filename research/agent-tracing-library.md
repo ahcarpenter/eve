@@ -26,8 +26,7 @@ object exposes turn execution and SDK telemetry, not reservation or restoration.
 completion outcomes. No second prepared-span durable driver remains.
 
 eve now uses typed recorder handles, corrupt-snapshot recovery, and
-recorder-owned tool correlation. The historical sketches below describe the
-earlier API; the current internal contract is documented in
+recorder-owned tool correlation. The current internal contract is documented in
 [the library guide](../packages/eve/src/tracing/core/README.md).
 
 Extract one neutral trace engine. Use the engine in eve before a public release.
@@ -55,7 +54,6 @@ This document does not claim certified ASD-STE100 compliance.
 ```ts
 interface AgentTracing {
   turn<T>(input: TurnInput, execute: (turn: TurnScope) => Promise<T>): Promise<T>;
-  integrations: { aiSdk: typeof aiSdkTracing };
 }
 
 interface TurnInput {
@@ -77,7 +75,10 @@ interface TraceReference {
 }
 
 interface TurnScope {
-  step<T>(input: StepInput, execute: (step: StepScope) => Promise<T>): Promise<T>;
+  attempt<T>(
+    input: { stepIndex: number; attempt: number },
+    execute: (attempt: StepScope) => Promise<T>,
+  ): Promise<T>;
 }
 
 interface StepInput {
@@ -103,27 +104,38 @@ interface ApprovalInput {
   request?: unknown;
 }
 interface StepScope {
-  model<T>(
+  modelCall<T>(
     input: ModelInput,
     execute: () => Promise<T>,
-    result?: (value: T) => ModelResult,
+    result: (value: T) => ModelResult,
   ): Promise<T>;
-  action<T>(input: ActionInput, execute: (action: ActionScope) => Promise<T>): Promise<T>;
+  action<T>(
+    input: ActionInput,
+    execute: (action: ActionScope) => Promise<T>,
+    describe: (value: T) => ActionResult,
+  ): Promise<T>;
 }
 interface ActionScope {
-  tool<T>(execute: () => Promise<T>): Promise<T>;
-  approval<T>(input: ApprovalInput, execute: () => Promise<T>): Promise<T>;
+  toolExecution<T>(
+    input: { executionId: string },
+    execute: () => Promise<T>,
+    describe: (value: T) => ActionResult,
+  ): Promise<T>;
+  approval<T>(
+    input: ApprovalInput,
+    execute: () => Promise<T>,
+    describe: (value: T) => { outcome: "approved" | "denied" | "cancelled" },
+  ): Promise<T>;
 }
+type ActionResult =
+  | { outcome: "completed"; output?: unknown }
+  | { outcome: "failed"; errorType: string; error?: unknown }
+  | { outcome: "rejected" | "cancelled" };
 
 declare function createAgentTracing(input: {
   agentName?: string;
   framework?: { name: string; version: string };
-  adapter: {
-    backend: TraceBackend;
-    serializer: ContentSerializer;
-    integrations?: { aiSdk: typeof aiSdkTracing };
-  };
-  checkpointer?: TraceCheckpointer;
+  output: TraceBackend;
   content?: { recordInputs: boolean; recordOutputs: boolean };
 }): AgentTracing;
 
@@ -140,15 +152,11 @@ type CaptureDecision =
 ```
 
 ```ts
-const tracing = createAgentTracing({
-  agentName: "support",
-  framework: { name: "custom-agent", version: "1.0" },
-  adapter: {
-    backend: liveOtelBackend(tracer),
-    serializer: aiSdkContentSerializer,
-    integrations: { aiSdk: aiSdkTracing },
-  },
-  content: { recordInputs: false, recordOutputs: false },
+const tracing = createAiSdkTracing({
+  agent: { name: "support" },
+  output: liveOtelBackend(tracer),
+  integrations: [existingTelemetry],
+  content: { inputs: false, outputs: false },
 });
 
 await tracing.turn({ conversationId, runId, turnId, sequence: 0 }, async (turn) => {
@@ -156,7 +164,7 @@ await tracing.turn({ conversationId, runId, turnId, sequence: 0 }, async (turn) 
     model,
     messages,
     tools,
-    telemetry: tracing.integrations.aiSdk(turn, { integrations: [existingTelemetry] }),
+    telemetry: tracing.telemetry(turn),
   });
   return result.text;
 });
@@ -175,20 +183,29 @@ For a custom loop, construct children through their parent scopes:
 
 ```ts
 await tracing.turn(turnInfo, async (turn) => {
-  await turn.step({ index: 0 }, async (step) => {
-    await step.model({ provider, modelId }, callModel, modelResult);
-    await step.action({ callId, name: "lookup" }, async (action) => {
-      await action.approval({ requestId }, requestApproval);
-      return await action.tool(executeLookup);
-    });
+  await turn.attempt({ stepIndex: 0, attempt: 0 }, async (attempt) => {
+    await attempt.modelCall({ provider, modelId }, callModel, modelResult);
+    await attempt.action(
+      { callId, name: "lookup" },
+      async (action) => {
+        await action.approval({ requestId }, requestApproval, (accepted) => ({
+          outcome: accepted ? "approved" : "denied",
+        }));
+        return await action.toolExecution({ executionId }, executeLookup, (output) => ({
+          outcome: "completed",
+          output,
+        }));
+      },
+      (output) => ({ outcome: "completed", output }),
+    );
   });
 });
 ```
 
 Construction controls parentage, span names, attributes, completion, and cleanup.
 No authoring scope exposes a raw span, attribute map, checkpoint, or resume method.
-Configure every adapter through `createAgentTracing`. Consumers use callback or
-lifecycle methods for usage, protocol metadata, payloads, and errors.
+Protocol-specific factories select conversion and serialization. Consumers use
+callback scopes or separate recorder handles for semantic operations.
 Attribute builders are private implementation details, not API entry points.
 
 The lifecycle owns semantic activation, pending tool parentage, reference
@@ -509,9 +526,9 @@ output mapping and authorization.
 
 ## eve adoption and durable state
 
-Configure `checkpointer` once through a runtime-owned `TraceCheckpointer` adapter.
-The adapter loads, saves, and removes serializable records in the existing
-workflow checkpoint. The library does not create a separate checkpoint.
+Create the recorder separately from application tracing. Select live or durable
+behavior at construction. The runtime commits detached versioned snapshots with
+its existing workflow checkpoint. The library does not perform storage IO.
 
 Internal runtime bindings supply stable operation keys. Scope construction
 restores or creates the corresponding record. The record retains ancestry,
@@ -519,9 +536,10 @@ reserved identity, start time, capture permission, and semantic operation data.
 Only the application runtime controls suspension, replay, and retry.
 Tracing must never invoke earlier application callbacks during restoration.
 
-Lifecycle is the lower-level API. The callback DSL uses lifecycle construction,
-`started()`, `completed()`, and `failed()` internally. SDK hooks and eve events
-use that same implementation. The backend accepts opaque host context explicitly;
+Operation-specific recorder handles are the runtime API. The callback DSL and
+SDK hooks use the same private operation implementation. Completion outcomes are
+discriminated; there is no independent failure flag in the recorder contract.
+The backend accepts opaque host context explicitly;
 no adapter captures a raw span or wraps it with `Proxy`.
 
 eve can project its existing durable records into runtime scope bindings.
