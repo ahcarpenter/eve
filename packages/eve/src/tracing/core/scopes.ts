@@ -39,6 +39,8 @@ import { mcpLifecycle } from "#tracing/core/mcp.js";
 import { intersectCapture } from "#tracing/core/activation.js";
 import { pendingTool } from "#tracing/core/pending-tool.js";
 import { accumulateUsage } from "#tracing/core/usage.js";
+import { snapshotRecord } from "#tracing/core/snapshot.js";
+import { withoutDeclinedContent } from "#tracing/core/content-policy.js";
 export { scopeRuntime } from "#tracing/core/topology.js";
 
 export type { ScopeIdentity, TurnMetadata } from "#tracing/core/scope-lifecycle.js";
@@ -52,7 +54,6 @@ export type {
   MemoryOptions,
 } from "#tracing/core/scope-lifecycle.js";
 import type {
-  StepOptions,
   ModelOptions,
   ActionOptions,
   ApprovalOptions,
@@ -63,33 +64,48 @@ export type { MemoryResult } from "#tracing/core/scope-lifecycle.js";
 import type { MemoryResult } from "#tracing/core/scope-lifecycle.js";
 
 export interface TurnScope {
-  step<T>(options: StepOptions, execute: (step: StepScope) => Promise<T>): Promise<T>;
+  attempt<T>(
+    options: { stepIndex: number; attempt: number },
+    execute: (step: StepScope) => Promise<T>,
+  ): Promise<T>;
   memory<T>(options: MemoryOptions, execute: () => Promise<MemoryResult<T>>): Promise<T>;
 }
 export interface StepScope {
-  model<T>(
+  modelCall<T>(
     options: ModelOptions,
     execute: () => Promise<T>,
-    result?: (value: T) => ModelResult,
+    result: (value: T) => ModelResult,
   ): Promise<T>;
-  action<T>(options: ActionOptions, execute: (action: ActionScope) => Promise<T>): Promise<T>;
+  action<T>(
+    options: ActionOptions,
+    execute: (action: ActionScope) => Promise<T>,
+    describe: (value: T) => ActionResult,
+  ): Promise<T>;
   memory<T>(options: MemoryOptions, execute: () => Promise<MemoryResult<T>>): Promise<T>;
 }
 export interface ActionScope {
-  tool<T>(execute: () => Promise<T>): Promise<T>;
+  toolExecution<T>(
+    input: { executionId: string },
+    execute: () => Promise<T>,
+    describe: (value: T) => ToolResult,
+  ): Promise<T>;
   approval<T>(
     options: ApprovalOptions,
     execute: () => Promise<T>,
-    outcome?: (value: T) => "approved" | "denied" | "cancelled",
+    outcome: (value: T) => { outcome: "approved" | "denied" | "cancelled" },
   ): Promise<T>;
   memory<T>(options: MemoryOptions, execute: () => Promise<MemoryResult<T>>): Promise<T>;
 }
+export type ToolResult =
+  | { outcome: "completed"; output?: unknown }
+  | { outcome: "failed"; errorType: string; error?: unknown };
+export type ActionResult = ToolResult | { outcome: "rejected" | "cancelled" };
 
 export type { ScopeData } from "#tracing/core/scope-lifecycle.js";
 import type { ScopeData } from "#tracing/core/scope-lifecycle.js";
 
-export type { ScopeRecord, TraceCheckpointer } from "#tracing/core/scope-lifecycle.js";
-import type { ScopeRecord, TraceCheckpointer } from "#tracing/core/scope-lifecycle.js";
+export type { ScopeRecord } from "#tracing/core/scope-lifecycle.js";
+import type { ScopeRecord } from "#tracing/core/scope-lifecycle.js";
 
 export type { RuntimeBinding, ScopeTerminal } from "#tracing/core/scope-lifecycle.js";
 import type { RuntimeBinding } from "#tracing/core/scope-lifecycle.js";
@@ -100,12 +116,14 @@ import type { RuntimeScope } from "#tracing/core/scope-lifecycle.js";
 export function createTraceLifecycle(input: {
   readonly backend: TraceBackend | DurableTraceBackend;
   readonly serializer: ContentSerializer;
-  readonly checkpointer?: TraceCheckpointer;
+  readonly mode?: "live" | "durable";
   readonly diagnostic?: (code: string) => void;
   readonly mapIdentity?: (identity: ScopeIdentity) => Attributes;
 }) {
   const engine = createTraceEngine(input);
   const backend = input.backend;
+  if (input.mode === "durable" && !("reserveActivation" in backend))
+    throw new Error("Durable tracing requires reserved-ID backend support.");
   let counter = 0;
   const scopeLimit = 10_000;
 
@@ -117,8 +135,8 @@ export function createTraceLifecycle(input: {
     attempt: ScopeRecord["attempt"],
     binding?: RuntimeBinding,
   ): Promise<RuntimeScope> {
-    const key = binding?.key ?? `${identity.runId}:${identity.turnId}:${counter++}`;
-    const saved = input.checkpointer === undefined ? undefined : await input.checkpointer.load(key);
+    const key = binding?.key ?? JSON.stringify([identity.runId, identity.turnId, counter++]);
+    const saved = binding?.snapshot;
     if (
       saved !== undefined &&
       (saved.identity.runId !== identity.runId ||
@@ -140,7 +158,18 @@ export function createTraceLifecycle(input: {
             recordInputs: capture.recordInputs && saved.capture.recordInputs,
             recordOutputs: capture.recordOutputs && saved.capture.recordOutputs,
           };
-    let actualData = capturedData(saved?.data ?? data, actualCapture);
+    let actualData = snapshotRecord(
+      {
+        key,
+        identity: actualIdentity,
+        data: saved?.data ?? data,
+        capture: actualCapture,
+        reference: saved?.reference ??
+          binding?.reference ?? { traceId: "0".repeat(32), spanId: "0".repeat(16), traceFlags: 0 },
+        startTimeMs,
+      },
+      input.serializer,
+    ).data;
     const actualAttempt = saved?.attempt ?? attempt;
     const links = saved?.links ?? binding?.links;
     let prepared = prepare(
@@ -166,7 +195,7 @@ export function createTraceLifecycle(input: {
       };
     }
     const durable = input.backend;
-    const deferred = binding?.deferred === true || input.checkpointer !== undefined;
+    const deferred = binding?.deferred ?? input.mode === "durable";
     let reference = saved?.reference ?? binding?.reference;
     if (deferred && reference === undefined) {
       if (!("reserveActivation" in durable))
@@ -209,7 +238,6 @@ export function createTraceLifecycle(input: {
       content,
     };
     record = { ...record, data: actualData, capture: actualCapture };
-    if (input.checkpointer !== undefined) await input.checkpointer.save(record);
     let finished = false;
     let started = false;
     const children = new Set<RuntimeScope>();
@@ -246,14 +274,11 @@ export function createTraceLifecycle(input: {
           ? { index: childData.options.index, attempt: childData.options.attempt ?? 0 }
           : actualAttempt;
       const next = await construct(actualIdentity, actualCapture, childData, runtime, nextAttempt, {
-        ...(childBinding ?? { key: `${key}:${childData.type}:${childIndex++}` }),
+        ...(childBinding ?? { key: JSON.stringify([key, childData.type, childIndex++]) }),
         outputContext:
           childBinding?.outputContext ?? record?.outputContext ?? binding?.outputContext,
       });
-      if (input.checkpointer !== undefined) {
-        record = { ...record!, childIndex, stepIndex };
-        await input.checkpointer.save(record);
-      }
+      record = { ...record!, childIndex, stepIndex };
       if (childData.type === "model")
         runtime.modelSelected(childData.options.modelId, childData.options.provider);
       children.add(next);
@@ -267,6 +292,19 @@ export function createTraceLifecycle(input: {
       },
       get capture() {
         return actualCapture;
+      },
+      snapshot() {
+        return snapshotRecord(
+          {
+            ...record!,
+            data: actualData,
+            capture: actualCapture,
+            usage: { inputTokens: totalInput, outputTokens: totalOutput },
+            childIndex,
+            stepIndex,
+          },
+          input.serializer,
+        );
       },
       mcp: mcpLifecycle({
         serializer: input.serializer,
@@ -334,6 +372,15 @@ export function createTraceLifecycle(input: {
           intersectCapture(actualCapture, ceiling),
           backend.active?.()?.capture,
         );
+        actualData = capturedData(actualData, actualCapture);
+        prepared = {
+          ...prepared,
+          attributes: (withoutDeclinedContent(prepared.attributes, actualCapture) ??
+            prepared.attributes) as Attributes,
+        };
+        const permitted = withoutDeclinedContent(enrichment, actualCapture) ?? enrichment;
+        for (const key of Object.keys(enrichment)) if (!(key in permitted)) delete enrichment[key];
+        record = { ...record!, data: actualData, capture: actualCapture };
         let entered = false;
         try {
           return input.backend.run(
@@ -381,7 +428,6 @@ export function createTraceLifecycle(input: {
         if (actualData.type === "model" && result.model !== undefined)
           await parent?.usage(result.model.usage);
         operation.end(result.endTimeMs);
-        if (input.checkpointer !== undefined) await input.checkpointer.remove(key);
       },
       async started() {
         if (finished || started) return;
@@ -408,15 +454,7 @@ export function createTraceLifecycle(input: {
         );
         totalInput = total.inputTokens;
         totalOutput = total.outputTokens;
-        if (input.checkpointer !== undefined) {
-          record = {
-            ...record!,
-            capture: actualCapture,
-            data: capturedData(actualData, actualCapture),
-            usage: { inputTokens: totalInput, outputTokens: totalOutput },
-          };
-          await input.checkpointer.save(record);
-        }
+        record = { ...record!, usage: { inputTokens: totalInput, outputTokens: totalOutput } };
         await parent?.usage(usage);
       },
       nextStep() {
@@ -680,13 +718,10 @@ export function createTraceLifecycle(input: {
     ) {
       return construct(identity, capture, data, undefined, attempt, binding);
     },
-    async restore(key: string, capture: CaptureDecision): Promise<RuntimeScope | undefined> {
-      if (input.checkpointer === undefined)
-        throw new Error("Scope restoration requires a runtime checkpointer.");
-      const record = await input.checkpointer.load(key);
-      if (record === undefined) return undefined;
+    async restore(record: ScopeRecord, capture: CaptureDecision): Promise<RuntimeScope> {
       return construct(record.identity, capture, record.data, undefined, record.attempt, {
-        key,
+        key: record.key,
+        snapshot: record,
         deferred: true,
         parent: record.parent,
       });

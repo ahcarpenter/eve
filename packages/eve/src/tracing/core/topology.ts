@@ -20,10 +20,18 @@ export function topologyScope(runtime: RuntimeScope): TurnScope | StepScope | Ac
     await operation.started();
     try {
       const value = await operation.run(callback);
-      await operation.completed(terminal?.(value) ?? { output: value });
+      let result: ScopeTerminal = {};
+      try {
+        result = terminal?.(value) ?? { output: value };
+      } catch {}
+      try {
+        await operation.completed(result);
+      } catch {}
       return value;
     } catch (error) {
-      await operation.failed(error);
+      try {
+        await operation.failed(error);
+      } catch {}
       throw error;
     }
   }
@@ -42,8 +50,8 @@ export function topologyScope(runtime: RuntimeScope): TurnScope | StepScope | Ac
   switch (runtime.type) {
     case "activation":
       scope = {
-        async step(options, callback) {
-          const next = await runtime.step(options);
+        async attempt(options, callback) {
+          const next = await runtime.step({ index: options.stepIndex, attempt: options.attempt });
           return execute(next, () => callback(next.authoring as StepScope));
         },
         memory,
@@ -51,27 +59,45 @@ export function topologyScope(runtime: RuntimeScope): TurnScope | StepScope | Ac
       break;
     case "step":
       scope = {
-        async model(options, callback, result) {
+        async modelCall(options, callback, result) {
           const next = await runtime.model(options);
           return execute(next, callback, (value) =>
             result === undefined ? {} : { model: result(value) },
           );
         },
-        async action(options, callback) {
+        async action(options, callback, describe) {
           const next = await runtime.action(options);
-          return execute(next, () => callback(next.authoring as ActionScope));
+          return execute(
+            next,
+            () => callback(next.authoring as ActionScope),
+            (value) => {
+              const result = describe(value);
+              return {
+                ...result,
+                failed: result.outcome === "failed",
+                errorCode: "errorType" in result ? result.errorType : undefined,
+              };
+            },
+          );
         },
         memory,
       };
       break;
     case "action":
       scope = {
-        async tool(callback) {
-          return execute(await runtime.tool(), callback);
+        async toolExecution(input, callback, describe) {
+          return execute(await runtime.tool({ key: input.executionId }), callback, (value) => {
+            const result = describe(value);
+            return {
+              ...result,
+              failed: result.outcome === "failed",
+              errorCode: "errorType" in result ? result.errorType : undefined,
+            };
+          });
         },
         async approval(options, callback, outcome) {
           return execute(await runtime.approval(options), callback, (response) => ({
-            outcome: outcome?.(response) ?? "approved",
+            outcome: outcome(response).outcome,
             response,
           }));
         },

@@ -30,6 +30,7 @@ export interface ScopeIdentity extends RunIdentity {
 
 /** Runtime-owned state. Authoring scopes never expose a checkpoint or raw span. */
 export interface ScopeRecord {
+  readonly version?: 1;
   readonly key: string;
   readonly identity: ScopeIdentity;
   readonly data: ScopeData;
@@ -47,6 +48,7 @@ export interface ScopeRecord {
 }
 
 export interface RuntimeScope {
+  snapshot(): ScopeRecord;
   readonly type: ScopeData["type"];
   readonly reference: TraceReference;
   readonly finished: boolean;
@@ -128,12 +130,6 @@ export interface MemoryOptions {
   readonly storeId: string;
 }
 
-export interface TraceCheckpointer {
-  load(key: string): Promise<ScopeRecord | undefined>;
-  save(record: ScopeRecord): Promise<void>;
-  remove(key: string): Promise<void>;
-}
-
 export interface MemoryResult<T> {
   readonly value: T;
   readonly recordCount?: number;
@@ -149,6 +145,7 @@ export interface ScopeCost {
 }
 
 export interface RuntimeBinding {
+  readonly snapshot?: ScopeRecord;
   readonly key: string;
   readonly reference?: TraceReference;
   readonly startTimeMs?: number;

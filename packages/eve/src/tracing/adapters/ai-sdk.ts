@@ -2,6 +2,31 @@ import type { Telemetry, TelemetryOptions } from "ai";
 import { scopeRuntime, type RuntimeScope, type TurnScope } from "#tracing/core/scopes.js";
 import { modelContent, modelUsage } from "#tracing/adapters/ai-sdk-payload.js";
 import { readGatewayCostData } from "#tracing/adapters/gateway.js";
+import { createTracingRuntime } from "#tracing/core/agent-tracing.js";
+import type { TraceBackend } from "#tracing/core/types.js";
+import { aiSdkContentSerializer } from "#tracing/adapters/serializer.js";
+
+export function createAiSdkTracing(input: {
+  agent?: { name: string };
+  output: TraceBackend;
+  content?: { inputs: boolean; outputs: boolean };
+  integrations?: readonly Telemetry[];
+  diagnostic?: (code: string) => void;
+}) {
+  const recorder = createTracingRuntime({
+    agentName: input.agent?.name,
+    adapter: { backend: input.output, serializer: aiSdkContentSerializer },
+    content: {
+      recordInputs: input.content?.inputs ?? false,
+      recordOutputs: input.content?.outputs ?? false,
+    },
+    diagnostic: input.diagnostic,
+  });
+  return {
+    turn: recorder.turn,
+    telemetry: (turn: TurnScope) => aiSdkTracing(turn, { integrations: input.integrations }),
+  };
+}
 
 type Event<K extends keyof Telemetry> = Parameters<NonNullable<Telemetry[K]>>[0];
 

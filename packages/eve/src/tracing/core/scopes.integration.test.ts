@@ -4,12 +4,8 @@ import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
-import { createAgentTracing } from "#tracing/core/agent-tracing.js";
-import {
-  createTraceLifecycle,
-  type TraceCheckpointer,
-  type ScopeRecord,
-} from "#tracing/core/scopes.js";
+import { createTracingRuntime as createAgentTracing } from "#tracing/core/agent-tracing.js";
+import { createTraceLifecycle, type ScopeRecord } from "#tracing/core/scopes.js";
 import { durableOtelBackend, liveOtelBackend } from "#tracing/adapters/otel.js";
 import { aiSdkContentSerializer } from "#tracing/adapters/serializer.js";
 import { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
@@ -17,8 +13,68 @@ import { eveOutputMapping } from "#tracing/core/profiles/eve.js";
 import { context } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { createMcpTracing } from "#tracing/adapters/mcp.js";
+import { createAiSdkTracing } from "#tracing/adapters/ai-sdk.js";
+import { createTraceRecorder } from "#tracing/core/recorder.js";
 
 describe("constructed agent trace scopes", () => {
+  it("separates application tracing from typed runtime operations and records denial explicitly", async () => {
+    const exporter = new InMemorySpanExporter();
+    const provider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    try {
+      const output = liveOtelBackend(provider.getTracer("interfaces"));
+      const tracing = createAiSdkTracing({ agent: { name: "support" }, output });
+      expect("lifecycle" in tracing || "reserve" in tracing || "integrations" in tracing).toBe(
+        false,
+      );
+      await tracing.turn(
+        { conversationId: "conversation", runId: "run", turnId: "turn", sequence: 0 },
+        (turn) =>
+          turn.attempt({ stepIndex: 0, attempt: 0 }, (attempt) =>
+            attempt.action(
+              { callId: "call", name: "lookup" },
+              (action) =>
+                action.approval(
+                  { requestId: "request" },
+                  async () => false,
+                  (approved) => ({ outcome: approved ? "approved" : "denied" }),
+                ),
+              () => ({ outcome: "rejected" }),
+            ),
+          ),
+      );
+      expect(
+        exporter.getFinishedSpans().find((span) => span.name === "agent.approval")?.attributes[
+          "agent.approval.outcome"
+        ],
+      ).toBe("denied");
+      const recorder = createTraceRecorder({
+        output,
+        serializer: aiSdkContentSerializer,
+        mode: "live",
+      });
+      const turn = await recorder.beginTurn({
+        identity: {
+          conversationId: "conversation",
+          runId: "run",
+          turnId: "typed",
+          framework: { name: "custom", version: "1" },
+        },
+        metadata: { sequence: 0 },
+        capture: { emit: true, recordInputs: false, recordOutputs: false },
+        binding: { key: "typed" },
+      });
+      const model = await (
+        await turn.attempt({ index: 0 }, "attempt")
+      ).modelCall({ provider: "provider", modelId: "model" }, "model");
+      expect("approval" in model || "toolExecution" in model).toBe(false);
+      await model.complete({ outcome: "completed", result: { finishReason: "stop", usage: {} } });
+      await turn.complete({ outcome: "completed" });
+    } finally {
+      await provider.shutdown();
+    }
+  });
   it("retains pending tool enrichment and terminal state until its action parent attaches", async () => {
     const idGenerator = new AgentSpanIdGenerator();
     const exporter = new InMemorySpanExporter();
@@ -85,36 +141,43 @@ describe("constructed agent trace scopes", () => {
       await tracing.turn(
         { conversationId: "conversation", runId: "run", turnId: "turn", sequence: 0 },
         (turn) =>
-          turn.step({ index: 0 }, (step) =>
-            step.action({ callId: "call", name: "lookup" }, (action) =>
-              action.tool(async () => {
-                await Promise.resolve();
-                expect(tracing.lifecycle.active()?.type).toBe("tool");
-                await tracing.lifecycle.run(
-                  tracing.lifecycle.active()!.reference,
-                  { emit: true, recordInputs: false, recordOutputs: false },
+          turn.attempt({ stepIndex: 0, attempt: 0 }, (step) =>
+            step.action(
+              { callId: "call", name: "lookup" },
+              (action) =>
+                action.toolExecution(
+                  { executionId: "execution" },
                   async () => {
                     await Promise.resolve();
-                    tracing.lifecycle.active()?.mcp?.arguments("secret");
+                    expect(tracing.lifecycle.active()?.type).toBe("tool");
                     await tracing.lifecycle.run(
                       tracing.lifecycle.active()!.reference,
-                      { emit: true, recordInputs: true, recordOutputs: true },
+                      { emit: true, recordInputs: false, recordOutputs: false },
                       async () => {
                         await Promise.resolve();
-                        expect(tracing.lifecycle.active()?.capture.recordOutputs).toBe(false);
-                        tracing.lifecycle.active()?.mcp?.result("secret");
+                        tracing.lifecycle.active()?.mcp?.arguments("secret");
+                        await tracing.lifecycle.run(
+                          tracing.lifecycle.active()!.reference,
+                          { emit: true, recordInputs: true, recordOutputs: true },
+                          async () => {
+                            await Promise.resolve();
+                            expect(tracing.lifecycle.active()?.capture.recordOutputs).toBe(false);
+                            tracing.lifecycle.active()?.mcp?.result("secret");
+                          },
+                        );
+                        await tracing.mcpAdapter!.call({
+                          connectionName: "catalog",
+                          toolName: "lookup",
+                          arguments: "secret",
+                          execute: async () => "secret",
+                        });
                       },
                     );
-                    await tracing.mcpAdapter!.call({
-                      connectionName: "catalog",
-                      toolName: "lookup",
-                      arguments: "secret",
-                      execute: async () => "secret",
-                    });
+                    return "result";
                   },
-                );
-                return "result";
-              }),
+                  (value) => ({ outcome: "completed", output: value }),
+                ),
+              () => ({ outcome: "completed" }),
             ),
           ),
       );
@@ -130,13 +193,10 @@ describe("constructed agent trace scopes", () => {
     }
   });
 
-  it("preserves callback results and application errors when checkpoint IO fails", async () => {
+  it("preserves callback results and application errors without library-owned checkpoint IO", async () => {
     const idGenerator = new AgentSpanIdGenerator();
     const provider = new BasicTracerProvider({ idGenerator });
     try {
-      const unavailable = async () => {
-        throw new Error("checkpoint unavailable");
-      };
       const tracing = createAgentTracing({
         adapter: {
           backend: durableOtelBackend({
@@ -146,7 +206,6 @@ describe("constructed agent trace scopes", () => {
           }),
           serializer: aiSdkContentSerializer,
         },
-        checkpointer: { load: unavailable, save: unavailable, remove: unavailable },
       });
       const input = { conversationId: "conversation", runId: "run", turnId: "turn", sequence: 0 };
       expect(await tracing.turn(input, async () => "result")).toBe("result");
@@ -174,15 +233,7 @@ describe("constructed agent trace scopes", () => {
           }),
           serializer: aiSdkContentSerializer,
         },
-        checkpointer: {
-          load: async (key) => records.get(key),
-          save: async (record) => {
-            records.set(record.key, record);
-          },
-          remove: async (key) => {
-            records.delete(key);
-          },
-        },
+        mode: "durable",
       });
       const turn = await tracing.lifecycle.turn(
         {
@@ -195,9 +246,14 @@ describe("constructed agent trace scopes", () => {
         { emit: true, recordInputs: true, recordOutputs: true },
         { key: "turn" },
       );
-      await (
-        await turn.step({ index: 0 })
-      ).action({ callId: "call", name: "lookup", arguments: "secret input" });
+      const step = await turn.step({ index: 0 });
+      const action = await step.action({
+        callId: "call",
+        name: "lookup",
+        arguments: "secret input",
+      });
+      for (const operation of [turn, step, action])
+        records.set(operation.snapshot().key, operation.snapshot());
       expect(JSON.stringify([...records.values()])).not.toContain("secret");
       expect(
         [...records.values()].every(
@@ -226,10 +282,14 @@ describe("constructed agent trace scopes", () => {
         tracing.turn(
           { conversationId: "conversation", runId: "run", turnId: "turn", sequence: 0 },
           async (turn) => {
-            await turn.step({ index: 0 }, async (step) => {
-              await step.model({ provider: "provider", modelId: "model" }, async () => {
-                throw new TypeError("secret");
-              });
+            await turn.attempt({ stepIndex: 0, attempt: 0 }, async (step) => {
+              await step.modelCall(
+                { provider: "provider", modelId: "model" },
+                async () => {
+                  throw new TypeError("secret");
+                },
+                () => ({ finishReason: "stop", usage: {} }),
+              );
             });
           },
         ),
@@ -274,23 +334,35 @@ describe("constructed agent trace scopes", () => {
       const value = await tracing.turn(
         { conversationId: "conversation", runId: "run", turnId: "turn", sequence: 0 },
         (turn) =>
-          turn.step({ index: 0 }, async (step) => {
-            await step.model(
+          turn.attempt({ stepIndex: 0, attempt: 0 }, async (step) => {
+            await step.modelCall(
               { provider: "provider", modelId: "model" },
               async () => "answer",
               () => ({ finishReason: "stop", usage: { inputTokens: 3, outputTokens: 2 } }),
             );
-            return step.action({ callId: "lookup", name: "lookup" }, async (action) => {
-              expect(
-                "checkpoint" in action ||
-                  "resume" in action ||
-                  "setAttribute" in action ||
-                  "step" in action ||
-                  "action" in action,
-              ).toBe(false);
-              await action.approval({ requestId: "request" }, async () => true);
-              return action.tool(async () => "result");
-            });
+            return step.action(
+              { callId: "lookup", name: "lookup" },
+              async (action) => {
+                expect(
+                  "checkpoint" in action ||
+                    "resume" in action ||
+                    "setAttribute" in action ||
+                    "step" in action ||
+                    "action" in action,
+                ).toBe(false);
+                await action.approval(
+                  { requestId: "request" },
+                  async () => true,
+                  () => ({ outcome: "approved" }),
+                );
+                return action.toolExecution(
+                  { executionId: "execution" },
+                  async () => "result",
+                  (value) => ({ outcome: "completed", output: value }),
+                );
+              },
+              () => ({ outcome: "completed" }),
+            );
           }),
       );
       expect(value).toBe("result");
@@ -368,22 +440,13 @@ describe("constructed agent trace scopes", () => {
       spanProcessors: [new SimpleSpanProcessor(exporter)],
     });
     const records = new Map<string, ScopeRecord>();
-    const checkpointer: TraceCheckpointer = {
-      load: async (key) => records.get(key),
-      save: async (record) => {
-        records.set(record.key, JSON.parse(JSON.stringify(record)) as ScopeRecord);
-      },
-      remove: async (key) => {
-        records.delete(key);
-      },
-    };
     try {
       const backend = durableOtelBackend({
         tracer: provider.getTracer("durable-dsl"),
         idGenerator,
         samplesTrace: () => true,
       });
-      const options = { backend, serializer: aiSdkContentSerializer, checkpointer };
+      const options = { backend, serializer: aiSdkContentSerializer, mode: "durable" as const };
       const before = createTraceLifecycle(options);
       const capture = { emit: true, recordInputs: false, recordOutputs: false };
       const turn = await before.turn(
@@ -403,33 +466,39 @@ describe("constructed agent trace scopes", () => {
         { callId: "call", name: "lookup", arguments: "secret input" },
         { key: "action" },
       );
-      await action.approval(
+      const approval = await action.approval(
         { requestId: "request", request: "secret request" },
         { key: "approval" },
       );
+      for (const operation of [turn, step, action, approval])
+        records.set(operation.snapshot().key, operation.snapshot());
       const original = action.reference;
       expect(exporter.getFinishedSpans()).toHaveLength(0);
       expect(JSON.stringify([...records.values()])).not.toContain("secret input");
       const after = createTraceLifecycle(options);
-      const restored = await after.restore("action", {
+      const restored = await after.restore(records.get("action")!, {
         emit: true,
         recordInputs: true,
         recordOutputs: true,
       });
-      await (await after.restore("approval", capture))!.finish({ outcome: "approved" });
+      await (
+        await after.restore(records.get("approval")!, capture)
+      ).finish({ outcome: "approved" });
       expect(restored!.reference).toEqual(original);
       let executions = 0;
-      await (restored!.authoring as import("#tracing/core/scopes.js").ActionScope).tool(
+      await (restored!.authoring as import("#tracing/core/scopes.js").ActionScope).toolExecution(
+        { executionId: "execution" },
         async () => {
           executions++;
           return "secret output";
         },
+        (value) => ({ outcome: "completed", output: value }),
       );
       await restored!.finish({ output: "secret output" });
-      await (await after.restore("step", capture))!.finish();
-      await (await after.restore("turn", capture))!.finish();
+      await (await after.restore(records.get("step")!, capture)).finish();
+      await (await after.restore(records.get("turn")!, capture)).finish();
       expect(executions).toBe(1);
-      expect(records.size).toBe(0);
+      expect(records.size).toBe(4);
       const spans = exporter.getFinishedSpans();
       expect(
         spans.find((span) => span.name === "execute_tool lookup")!.parentSpanContext?.spanId,

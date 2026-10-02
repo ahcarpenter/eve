@@ -8,14 +8,13 @@ import {
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { context } from "@opentelemetry/api";
-import { createAgentTracing } from "#tracing/core/agent-tracing.js";
+import { createTracingRuntime as createAgentTracing } from "#tracing/core/agent-tracing.js";
 import { liveOtelBackend, durableOtelBackend } from "#tracing/adapters/otel.js";
 import { aiSdkTracing } from "#tracing/adapters/ai-sdk.js";
 import { aiSdkContentSerializer } from "#tracing/adapters/serializer.js";
 import { eveOutputMapping } from "#tracing/adapters/eve/compatibility.js";
 import { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import { createTraceEngine } from "#tracing/core/engine.js";
-import { createDurableTraceDriver, type DurableSpanRecord } from "#tracing/core/durable.js";
 import { ROOT_CONTEXT, createContextKey } from "@opentelemetry/api";
 
 const usage = {
@@ -48,7 +47,7 @@ function setup(mapping = false) {
   const tracing = createAgentTracing({
     agentName: "support",
     framework: { name: "custom", version: "1" },
-    adapter: { backend, serializer: aiSdkContentSerializer, integrations: { aiSdk: aiSdkTracing } },
+    adapter: { backend, serializer: aiSdkContentSerializer },
   });
   return { exporter, provider, tracer, backend, tracing, idGenerator };
 }
@@ -139,7 +138,7 @@ describe("standalone agent tracing", () => {
                 },
               }),
             },
-            telemetry: runtime.tracing.integrations.aiSdk(turn),
+            telemetry: aiSdkTracing(turn),
           });
         },
       );
@@ -224,20 +223,9 @@ describe("standalone agent tracing", () => {
     );
     child.setAttribute("agent.connection.name", "catalog");
     child.end(2000);
-    const records = new Map<string, DurableSpanRecord>();
-    const store = {
-      get: async (key: string) => records.get(key),
-      put: async (key: string, value: DurableSpanRecord) => {
-        records.set(key, value);
-      },
-      delete: async (key: string) => {
-        records.delete(key);
-      },
-    };
-    const driver = createDurableTraceDriver({ backend, store });
-    await driver.reserve("activation", span, capture);
-    const resumed = createDurableTraceDriver({ backend, store });
-    await resumed.finish("activation", { event: "turn.completed", endTimeMs: 3000 });
+    const root = engine.startReserved(span, reference, capture);
+    root.addEvent("turn.completed", undefined, 3000);
+    root.end(3000);
     const recorded = runtime.exporter.getFinishedSpans();
     expect(recorded[0]!.spanContext().spanId).toBe(childReference.spanId);
     expect(recorded[0]!.parentSpanContext?.spanId).toBe(reference.spanId);
@@ -248,7 +236,6 @@ describe("standalone agent tracing", () => {
     });
     expect(recorded[1]!.spanContext()).toMatchObject(reference);
     expect(recorded[1]!.links[0]!.attributes).toEqual({ "eve.link.type": "agent.dispatch" });
-    expect(records.size).toBe(0);
   });
 
   it("counts successful physical retries once and records requested content", async () => {
@@ -260,7 +247,6 @@ describe("standalone agent tracing", () => {
       adapter: {
         backend: runtime.backend,
         serializer: aiSdkContentSerializer,
-        integrations: { aiSdk: aiSdkTracing },
       },
       content: { recordInputs: true, recordOutputs: true },
     });
@@ -290,7 +276,7 @@ describe("standalone agent tracing", () => {
           model,
           prompt: "Alice's question",
           maxRetries: 1,
-          telemetry: tracing.integrations.aiSdk(turn),
+          telemetry: aiSdkTracing(turn),
         }),
     );
     await vi.runAllTimersAsync();
@@ -359,22 +345,32 @@ describe("standalone agent tracing", () => {
     await tracing.turn(
       { conversationId: "conversation", runId: "run", turnId: "auxiliary", sequence: 0 },
       async (turn) => {
-        await turn.step({ index: 0 }, (step) =>
-          step.action({ callId: "call", name: "lookup" }, async (action) => {
-            await action.approval(
-              { requestId: "request", request: { prompt: "Approve" } },
-              async () => "private response",
-            );
-            await action.memory(
-              { operation: "search_memory", phase: "retrieve", slot: "history", storeId: "store" },
-              async () => ({
-                value: null,
-                recordCount: 1,
-                records: [{ content: "Permitted record" }],
-              }),
-            );
-            return "private output";
-          }),
+        await turn.attempt({ stepIndex: 0, attempt: 0 }, (step) =>
+          step.action(
+            { callId: "call", name: "lookup" },
+            async (action) => {
+              await action.approval(
+                { requestId: "request", request: { prompt: "Approve" } },
+                async () => "private response",
+                () => ({ outcome: "approved" }),
+              );
+              await action.memory(
+                {
+                  operation: "search_memory",
+                  phase: "retrieve",
+                  slot: "history",
+                  storeId: "store",
+                },
+                async () => ({
+                  value: null,
+                  recordCount: 1,
+                  records: [{ content: "Permitted record" }],
+                }),
+              );
+              return "private output";
+            },
+            () => ({ outcome: "completed" }),
+          ),
         );
       },
     );
@@ -467,7 +463,7 @@ describe("standalone agent tracing", () => {
         const response = streamText({
           model,
           prompt: "Help Alice",
-          telemetry: runtime.tracing.integrations.aiSdk(turn),
+          telemetry: aiSdkTracing(turn),
         });
         for await (const chunk of response.textStream) {
           text += chunk;
