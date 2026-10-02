@@ -21,6 +21,7 @@ export function disabledOperation(
     traceFlags: 0,
   };
   return {
+    waitUntil() {},
     type: data.type,
     description: capturedScopeData(data, capture),
     reference,

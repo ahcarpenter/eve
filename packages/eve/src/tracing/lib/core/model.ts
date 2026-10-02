@@ -1,6 +1,25 @@
 import type { Attributes, ContentPart, Usage } from "#tracing/lib/core/types.js";
 import { usageAttributes } from "#tracing/lib/core/attributes.js";
 
+/** Completed response from one physical model invocation. */
+export interface ModelCompletion {
+  readonly finishReason: string;
+  readonly usage: Usage;
+  readonly content: readonly ContentPart[];
+  readonly responseId?: string;
+  readonly responseModelId?: string;
+}
+
+export interface ModelCallReturn<T> extends ModelCompletion {
+  readonly result: T;
+}
+
+export interface ModelStreamReturn<T> {
+  readonly result: T;
+  /** Settles on natural completion, cancellation, or stream failure. */
+  readonly completion: PromiseLike<ModelCompletion>;
+}
+
 export interface ContentSerializer {
   json(value: unknown): string | undefined;
   text(value: string): string | undefined;

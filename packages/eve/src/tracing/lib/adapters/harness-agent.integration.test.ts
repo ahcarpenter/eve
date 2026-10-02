@@ -216,12 +216,13 @@ describe("HarnessAgent consumer instrumentation", () => {
               {
                 provider: "provider",
                 modelId: "model",
-                describe: () => ({
-                  outcome: "completed" as const,
-                  result: { finishReason: "stop", usage: { inputTokens: 3 } },
-                }),
               },
-              async () => "answer",
+              async () => ({
+                result: "answer",
+                finishReason: "stop",
+                usage: { inputTokens: 3 },
+                content: [{ type: "text" as const, text: "answer" }],
+              }),
             );
             return attempt.action({ callId: "lookup", name: "lookup" }, async (action) => {
               await action.approval(

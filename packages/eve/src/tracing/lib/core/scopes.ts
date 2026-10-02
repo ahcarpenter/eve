@@ -205,6 +205,7 @@ export function createTraceLifecycle(input: {
     let finished = false;
     let started = false;
     const children = new Set<RuntimeScope>();
+    const pending = new Set<Promise<void>>();
     let childSequence = 0;
     let totalInput: number | undefined;
     let totalOutput: number | undefined;
@@ -244,6 +245,14 @@ export function createTraceLifecycle(input: {
       return next;
     }
     const runtime: RuntimeScope = {
+      waitUntil(completion) {
+        pending.add(completion);
+        parent?.waitUntil(completion);
+        void completion.then(
+          () => pending.delete(completion),
+          () => pending.delete(completion),
+        );
+      },
       parent: parentReference,
       startTimeMs,
       get description() {
@@ -310,6 +319,7 @@ export function createTraceLifecycle(input: {
       async finish(result = {}) {
         if (finished) return;
         finished = true;
+        if (pending.size > 0) await Promise.allSettled(pending);
         // Deferred children belong to the runtime scheduler, not the parent lifetime.
         for (const next of children)
           if (!next.finished && !deferred)

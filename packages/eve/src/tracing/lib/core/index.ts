@@ -1,4 +1,9 @@
 export { TRACE_SCHEMA_VERSION } from "#tracing/lib/core/schema.js";
+export type {
+  ModelCompletion,
+  ModelCallReturn,
+  ModelStreamReturn,
+} from "#tracing/lib/core/model.js";
 export { createAgentTracing, type AgentTracing } from "#tracing/lib/agent-tracing.js";
 export type { OtelConfiguration } from "#tracing/lib/adapters/otel-configuration.js";
 export { createTraceRecorder } from "#tracing/lib/core/recorder.js";
@@ -20,4 +25,5 @@ export type {
   FrameworkIdentity,
   TraceReference,
   Usage,
+  ContentPart,
 } from "#tracing/lib/core/types.js";

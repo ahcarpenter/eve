@@ -50,6 +50,7 @@ export interface ScopeRecord {
 }
 
 export interface RuntimeScope {
+  waitUntil(completion: Promise<void>): void;
   readonly parent?: TraceReference;
   readonly startTimeMs: number;
   readonly description: ScopeData;

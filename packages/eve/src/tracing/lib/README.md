@@ -59,12 +59,18 @@ const result = await attempt.modelCall(
   {
     provider: "example-provider",
     modelId: "example-model",
-    describe: (value) => ({
-      outcome: "completed" as const,
-      result: { finishReason: value.finishReason, usage: value.usage },
-    }),
   },
-  () => callModel(),
+  async () => {
+    const response = await callModel();
+    return {
+      result: response,
+      finishReason: response.finishReason,
+      usage: response.usage,
+      content: response.content,
+      responseId: response.responseId,
+      responseModelId: response.responseModelId,
+    };
+  },
 );
 ```
 
@@ -73,8 +79,12 @@ The library starts the span, activates its context, and calls the function once.
 It records the result or error and ends the span in `finally`.
 The call returns the original result or rethrows the original error.
 
-`describe` converts the application result into trace data. It does not end the
-span. With wrapped execution, you do not call `complete()`.
+Wrapped model execution returns an envelope with `result` and response metadata.
+Tracing records the metadata and returns `result` unchanged. With wrapped
+execution, you do not call `complete()`.
+
+Other operation types use `describe` to convert an application result into
+trace data. That function does not end the span.
 
 ### Lifecycle handle
 
@@ -155,17 +165,26 @@ const result = await tracing.turn({ identity, sequence: 0 }, (turn) =>
 
 Turns, attempts, actions, approvals, tools, model calls, and memory handles
 accept wrapped execution. Supply a `describe` function in metadata to record
-domain results. Wrapped model calls require a description with the finish
-reason and usage. Approval descriptions select approved or denied outcomes.
+domain results for actions and approvals. Wrapped model calls return response
+metadata with the application result. Approval descriptions select approved or denied outcomes.
 
 ```ts
 await attempt.modelCall(
   {
     provider: "example-provider",
     modelId: "example-model",
-    describe: (result) => ({ outcome: "completed" as const, result }),
   },
-  () => callModel(),
+  async () => {
+    const response = await callModel();
+    return {
+      result: response,
+      finishReason: response.finishReason,
+      usage: response.usage,
+      content: response.content,
+      responseId: response.responseId,
+      responseModelId: response.responseModelId,
+    };
+  },
 );
 
 await action.approval(
@@ -196,12 +215,18 @@ const result = await attempt.modelCall(
   {
     provider: "example-provider",
     modelId: "example-model",
-    describe: (value) => ({
-      outcome: "completed" as const,
-      result: { finishReason: value.finishReason, usage: value.usage },
-    }),
   },
-  () => callModel(),
+  async () => {
+    const response = await callModel();
+    return {
+      result: response,
+      finishReason: response.finishReason,
+      usage: response.usage,
+      content: response.content,
+      responseId: response.responseId,
+      responseModelId: response.responseModelId,
+    };
+  },
 );
 ```
 
@@ -210,6 +235,61 @@ added to parent operations. Consume streams inside the execution function.
 The library records thrown errors and completes the model in `finally`.
 
 An attempt also accepts gateway costs through `cost()`.
+
+## Stream model output
+
+`modelStream(data, execute)` returns the stream result immediately. Its execution
+function returns the result and a separate completion promise:
+
+```ts
+interface ModelCompletion {
+  finishReason: string;
+  usage: Usage;
+  content: readonly ContentPart[];
+  responseId?: string;
+  responseModelId?: string;
+}
+interface ModelCallReturn<T> extends ModelCompletion {
+  result: T;
+}
+interface ModelStreamReturn<T> {
+  result: T;
+  completion: PromiseLike<ModelCompletion>;
+}
+```
+
+`Usage` and `ContentPart` are library-owned types. SDK adapters convert provider
+types to these shapes.
+`content` contains completed text, reasoning, and tool content. The serializer
+uses that content for `gen_ai.output.messages` when output capture is permitted.
+
+```ts
+const stream = await attempt.modelStream({ provider, modelId, messages }, () => {
+  const response = startModelStream();
+  return {
+    result: response.stream,
+    completion: response.completion,
+  };
+});
+
+for await (const part of stream) {
+  sendToClient(part);
+}
+```
+
+Here, your adapter's `startModelStream()` observes natural completion, errors,
+and cancellation. It resolves `completion` with the completed response or
+rejects it with the stream error. Tracing observes that promise without reading
+the stream. Parent spans wait for pending model completions before export.
+
+AI SDK completion getters can consume streams automatically. An adapter must
+observe lifecycle completion rather than eagerly read those getters before
+returning the stream. For a callback that consumes the entire stream itself,
+use `modelCall()` and return completed metadata afterward.
+
+Each model operation describes one physical invocation. Multi-step generation
+needs a separate model operation for each invocation, not aggregate content or
+usage copied onto every model span.
 
 ## Record actions, approvals, and tools
 

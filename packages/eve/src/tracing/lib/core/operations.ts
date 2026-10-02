@@ -10,6 +10,7 @@ import type {
 } from "#tracing/lib/core/scopes.js";
 import type { CaptureDecision } from "#tracing/lib/core/types.js";
 import { aroundOperation } from "#tracing/lib/core/pointcut.js";
+import type { ModelCallReturn, ModelStreamReturn } from "#tracing/lib/core/model.js";
 
 type Handle = { run<T>(execute: () => T): T; complete(result: never): Promise<void> };
 export interface Pointcut<I, H extends Handle> {
@@ -90,10 +91,12 @@ export interface AttemptOperation extends Operation<
   cost(input: import("#tracing/lib/core/scope-lifecycle.js").ScopeCost): void;
   modelCall(input: ModelOptions, key?: string): Promise<ModelOperation>;
   modelCall<T>(
-    input: ModelOptions & {
-      describe: (value: T) => { outcome: "completed"; result: ModelResult } | Failure;
-    },
-    execute: (operation: ModelOperation) => T | PromiseLike<T>,
+    input: ModelOptions,
+    execute: () => ModelCallReturn<T> | PromiseLike<ModelCallReturn<T>>,
+  ): Promise<T>;
+  modelStream<T>(
+    input: ModelOptions,
+    execute: () => ModelStreamReturn<T> | PromiseLike<ModelStreamReturn<T>>,
   ): Promise<T>;
   action: Pointcut<ActionOptions, ActionOperation>;
   memory: Pointcut<MemoryOptions, MemoryOperation>;
@@ -158,24 +161,51 @@ function modelPointcut(runtime: RuntimeScope): AttemptOperation["modelCall"] {
       .then((operation) => operationHandle(operation) as ModelOperation);
   function modelCall(input: ModelOptions, key?: string): Promise<ModelOperation>;
   function modelCall<T>(
-    input: ModelOptions & {
-      describe: (value: T) => { outcome: "completed"; result: ModelResult } | Failure;
-    },
-    execute: (operation: ModelOperation) => T | PromiseLike<T>,
+    input: ModelOptions,
+    execute: () => ModelCallReturn<T> | PromiseLike<ModelCallReturn<T>>,
   ): Promise<T>;
   function modelCall<T>(
-    input: ModelOptions & {
-      describe?: (value: T) => { outcome: "completed"; result: ModelResult } | Failure;
-    },
-    execute?: string | ((operation: ModelOperation) => T | PromiseLike<T>),
+    input: ModelOptions,
+    execute?: string | (() => ModelCallReturn<T> | PromiseLike<ModelCallReturn<T>>),
   ): Promise<ModelOperation> | Promise<T> {
     if (typeof execute !== "function") return start(input, execute);
-    return pointcut((options: ModelOptions) => start(options), {
-      outcome: "failed",
-      errorType: "description_unavailable",
-    })(input, execute);
+    let handle: ModelOperation;
+    return aroundOperation<ModelCallReturn<T>, Parameters<ModelOperation["complete"]>[0]>({
+      start: async () => {
+        handle = await start(input);
+        return handle;
+      },
+      execute,
+      completed: (value) => ({ outcome: "completed", result: value }),
+      failed: modelFailure,
+      fallback: { outcome: "failed", errorType: "completion_unavailable" },
+    }).then<T>((value) => value.result);
   }
   return modelCall;
+}
+
+function modelFailure(error: unknown): Failure {
+  return { outcome: "failed", errorType: error instanceof Error ? error.name : "_OTHER", error };
+}
+
+function modelStream(runtime: RuntimeScope): AttemptOperation["modelStream"] {
+  return async (input, execute) => {
+    const handle = operationHandle(
+      await runtime.child({ type: "model", options: input }),
+    ) as ModelOperation;
+    try {
+      const value = await handle.run(execute);
+      const completion = Promise.resolve(value.completion).then(
+        (result) => handle.complete({ outcome: "completed", result }),
+        (error) => handle.complete(modelFailure(error)),
+      );
+      runtime.waitUntil(completion);
+      return value.result;
+    } catch (error) {
+      await handle.complete(modelFailure(error));
+      throw error;
+    }
+  };
 }
 
 export function operationHandle(runtime: RuntimeScope): RestoredOperation {
@@ -228,6 +258,7 @@ export function operationHandle(runtime: RuntimeScope): RestoredOperation {
       type: "step",
       cost: (input) => runtime.cost(input),
       modelCall: modelPointcut(runtime),
+      modelStream: modelStream(runtime),
       action: pointcut(
         async (options: ActionOptions) =>
           operationHandle(await runtime.child({ type: "action", options })) as ActionOperation,
