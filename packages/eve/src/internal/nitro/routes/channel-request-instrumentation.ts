@@ -1,5 +1,6 @@
 import {
   type Attributes,
+  type Context,
   context,
   propagation,
   type Span,
@@ -52,23 +53,32 @@ interface TraceChannelRequestInput {
  *
  * The handler runs inside the span's active context. When it returns, the
  * response status is recorded and a `>= 500` status marks the span as an
- * error. A thrown handler marks failure status and is rethrown; request
- * spans never record exception content. The span always ends in `finally`, without
- * waiting for `event.waitUntil()` work or streamed response bodies.
+ * error. A thrown handler marks failure status, ends the span, and is
+ * rethrown; request spans never record exception content. A response without
+ * a body ends the span at once. Otherwise the span ends when the body has been
+ * read to the end, fails (marking failure status), or is cancelled, so a
+ * streamed response's span lasts for the streaming time. It never waits for
+ * `event.waitUntil()` work.
+ *
+ * The body is read inside the span's active context, so spans started while a
+ * streamed body is produced are children of the still-open request span. A
+ * request span that ended first would leave them under an ended parent, where
+ * the bundled `@vercel/otel` span processor ends them early and they then end
+ * a second time.
  *
  * Emitting these spans is opt-in: unless authored instrumentation enables it
  * via `traceChannelRequests: true`, the handler runs with no span (`undefined`)
  * and performs no header extraction. The channel dispatcher can still use an
  * already-active platform span for the activation's cross-trace link.
  *
- * This is observability-only: it never changes the response and performs no
- * synchronous span export in the request path, adding only minimal in-process
- * tracing overhead.
+ * This is observability-only: it never changes the response's status, headers,
+ * or body bytes and performs no synchronous span export in the request path,
+ * adding only minimal in-process tracing overhead.
  */
-export async function traceChannelRequest<T extends Response>(
+export async function traceChannelRequest(
   input: TraceChannelRequestInput,
-  handler: (span: Span | undefined) => Promise<T>,
-): Promise<T> {
+  handler: (span: Span | undefined) => Promise<Response>,
+): Promise<Response> {
   if (getInstrumentationRuntime()?.otelSettings?.traceChannelRequests !== true) {
     return await handler(undefined);
   }
@@ -91,19 +101,73 @@ export async function traceChannelRequest<T extends Response>(
     withErrorContent(trace.setSpan(parentContext, span), false),
   );
 
+  let response: Response;
   try {
-    const response = await context.with(activeContext, () => handler(span));
-    span.setAttribute("http.response.status_code", response.status);
-    if (response.status >= 500) {
-      span.setStatus({ code: SpanStatusCode.ERROR });
-    }
-    return response;
+    response = await context.with(activeContext, () => handler(span));
   } catch (error) {
     span.setStatus({ code: SpanStatusCode.ERROR });
-    throw error;
-  } finally {
     span.end();
+    throw error;
   }
+
+  span.setAttribute("http.response.status_code", response.status);
+  if (response.status >= 500) {
+    span.setStatus({ code: SpanStatusCode.ERROR });
+  }
+  if (response.body === null) {
+    span.end();
+    return response;
+  }
+  return endSpanWithBody(response, response.body, span, activeContext);
+}
+
+/**
+ * Re-creates `response` around a pass-through of `body` that ends `span`
+ * exactly once: when the body is read to the end, fails, or is cancelled.
+ */
+function endSpanWithBody(
+  response: Response,
+  body: ReadableStream<Uint8Array>,
+  span: Span,
+  activeContext: Context,
+): Response {
+  const reader = body.getReader();
+  let cancelled = false;
+  const tracedBody = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        // The server pulls the body outside the handler's context.
+        const { done, value } = await context.with(activeContext, () => reader.read());
+        // A cancel settles the pending read as done; the cancel ends the span.
+        if (cancelled) return;
+        if (done) {
+          span.end();
+          controller.close();
+        } else {
+          controller.enqueue(value);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        span.end();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      cancelled = true;
+      try {
+        await reader.cancel(reason);
+      } finally {
+        span.end();
+      }
+    },
+  });
+
+  return new Response(tracedBody, {
+    headers: response.headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
 }
 
 /**

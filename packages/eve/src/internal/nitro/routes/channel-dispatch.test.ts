@@ -856,6 +856,13 @@ describe("dispatchChannelRequest tracing", () => {
     return exporter.getFinishedSpans();
   }
 
+  // The request span ends with the response body, which the server reads.
+  async function dispatchAndReadBody(event: H3Event, routeKey: string): Promise<Response> {
+    const response = await dispatchChannelRequest(event, routeKey, {} as never);
+    await response.arrayBuffer();
+    return response;
+  }
+
   it("uses the semantic request name", async () => {
     mockedResolveNitroChannelRuntimeBundle.mockResolvedValue({
       agentName: "test-agent",
@@ -863,7 +870,7 @@ describe("dispatchChannelRequest tracing", () => {
       runtime,
     });
 
-    await dispatchChannelRequest(createEvent({ waitUntil: vi.fn() }), "POST /slack", {} as never);
+    await dispatchAndReadBody(createEvent({ waitUntil: vi.fn() }), "POST /slack");
 
     const [span] = await finishedSpans();
     expect(span!.name).toBe("agent.channel.request");
@@ -890,10 +897,9 @@ describe("dispatchChannelRequest tracing", () => {
       runtime,
     });
 
-    const response = await dispatchChannelRequest(
+    const response = await dispatchAndReadBody(
       createEvent({ method: "POST", waitUntil: vi.fn() }),
       "POST /slack",
-      {} as never,
     );
 
     expect(response.status).toBe(200);
@@ -939,7 +945,7 @@ describe("dispatchChannelRequest tracing", () => {
       runtime,
     });
 
-    await dispatchChannelRequest(createEvent({ waitUntil: vi.fn() }), "POST /slack", {} as never);
+    await dispatchAndReadBody(createEvent({ waitUntil: vi.fn() }), "POST /slack");
 
     const [span] = await finishedSpans();
     expect(span!.attributes["eve.channel.kind"]).toBe("channel:support");
@@ -959,7 +965,7 @@ describe("dispatchChannelRequest tracing", () => {
       runtime,
     });
 
-    await dispatchChannelRequest(createEvent({ waitUntil: vi.fn() }), "POST /slack", {} as never);
+    await dispatchAndReadBody(createEvent({ waitUntil: vi.fn() }), "POST /slack");
 
     const spans = await finishedSpans();
     const server = spans.find((span) => span.name === "agent.channel.request");
@@ -970,10 +976,126 @@ describe("dispatchChannelRequest tracing", () => {
     expect(parentSpanId(nested!)).toBe(server!.spanContext().spanId);
   });
 
+  it("keeps the request span open until a streamed body ends, so spans made while it streams end inside it", async () => {
+    mockedResolveNitroChannelRuntimeBundle.mockResolvedValue({
+      agentName: "test-agent",
+      channels: [
+        slackChannel(
+          async () =>
+            new Response(
+              new ReadableStream<Uint8Array>(
+                {
+                  pull(controller) {
+                    // Model workflow.stream.read.connect: a span opened only
+                    // once the server starts reading the body.
+                    vendoredTrace
+                      .getTracer("test.nested")
+                      .startSpan("workflow.stream.read.connect")
+                      .end();
+                    controller.enqueue(new TextEncoder().encode("event\n"));
+                    controller.close();
+                  },
+                },
+                { highWaterMark: 0 },
+              ),
+            ),
+        ),
+      ],
+      runtime,
+    });
+
+    const response = await dispatchChannelRequest(
+      createEvent({ waitUntil: vi.fn() }),
+      "POST /slack",
+      {} as never,
+    );
+
+    expect((await finishedSpans()).map((span) => span.name)).not.toContain("agent.channel.request");
+    await expect(response.text()).resolves.toBe("event\n");
+
+    const spans = await finishedSpans();
+    expect(spans.map((span) => span.name)).toEqual([
+      "workflow.stream.read.connect",
+      "agent.channel.request",
+    ]);
+    const [nested, server] = spans;
+    expect(parentSpanId(nested!)).toBe(server!.spanContext().spanId);
+    expect(server!.attributes["http.response.status_code"]).toBe(200);
+  });
+
+  it("ends the request span and cancels the source when the client cancels a streamed body", async () => {
+    const sourceCancel = vi.fn();
+    mockedResolveNitroChannelRuntimeBundle.mockResolvedValue({
+      agentName: "test-agent",
+      channels: [
+        slackChannel(
+          async () =>
+            new Response(
+              new ReadableStream<Uint8Array>(
+                { pull: () => new Promise(() => {}), cancel: sourceCancel },
+                { highWaterMark: 0 },
+              ),
+            ),
+        ),
+      ],
+      runtime,
+    });
+
+    const response = await dispatchChannelRequest(
+      createEvent({ waitUntil: vi.fn() }),
+      "POST /slack",
+      {} as never,
+    );
+    expect(await finishedSpans()).toHaveLength(0);
+
+    await response.body!.cancel("client disconnected");
+
+    expect(sourceCancel).toHaveBeenCalledWith("client disconnected");
+    const [span, ...rest] = await finishedSpans();
+    expect(rest).toHaveLength(0);
+    expect(span!.name).toBe("agent.channel.request");
+    expect(span!.status.code).toBe(0 /* SpanStatusCode.UNSET */);
+  });
+
+  it("marks the request span failed when a streamed body errors", async () => {
+    mockedResolveNitroChannelRuntimeBundle.mockResolvedValue({
+      agentName: "test-agent",
+      channels: [
+        slackChannel(
+          async () =>
+            new Response(
+              new ReadableStream<Uint8Array>(
+                {
+                  pull(controller) {
+                    controller.error(new Error("stream source failed"));
+                  },
+                },
+                { highWaterMark: 0 },
+              ),
+            ),
+        ),
+      ],
+      runtime,
+    });
+
+    const response = await dispatchChannelRequest(
+      createEvent({ waitUntil: vi.fn() }),
+      "POST /slack",
+      {} as never,
+    );
+
+    await expect(response.text()).rejects.toThrow("stream source failed");
+    const [span] = await finishedSpans();
+    expect(span!.name).toBe("agent.channel.request");
+    expect(span!.attributes["http.response.status_code"]).toBe(200);
+    expect(span!.status.code).toBe(2 /* SpanStatusCode.ERROR */);
+    expect(span!.events.filter((event) => event.name === "exception")).toHaveLength(0);
+  });
+
   it("captures the created SERVER span context on channel delivery metadata", async () => {
     const tracedRuntime = mockRouteSendRuntime();
 
-    await dispatchChannelRequest(
+    await dispatchAndReadBody(
       createEvent({
         headers: {
           traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
@@ -983,7 +1105,6 @@ describe("dispatchChannelRequest tracing", () => {
         waitUntil: vi.fn(),
       }),
       "POST /slack",
-      {} as never,
     );
 
     const [server] = await finishedSpans();
@@ -1011,13 +1132,12 @@ describe("dispatchChannelRequest tracing", () => {
       runtime,
     });
 
-    await dispatchChannelRequest(
+    await dispatchAndReadBody(
       createEvent({
         headers: { traceparent: `00-${traceId}-${parentId}-01` },
         waitUntil: vi.fn(),
       }),
       "POST /slack",
-      {} as never,
     );
 
     const [span] = await finishedSpans();
@@ -1081,10 +1201,9 @@ describe("dispatchChannelRequest tracing", () => {
       runtime,
     });
 
-    const response = await dispatchChannelRequest(
+    const response = await dispatchAndReadBody(
       createEvent({ waitUntil: vi.fn() }),
       "POST /missing",
-      {} as never,
     );
 
     expect(response.status).toBe(404);
@@ -1126,7 +1245,7 @@ describe("dispatchChannelRequest tracing", () => {
       url: `https://eve.test/eve/v1/session/${sessionId}?token=${hookToken}`,
     });
 
-    await dispatchChannelRequest(event, "POST /eve/v1/session/:sessionId", {} as never);
+    await dispatchAndReadBody(event, "POST /eve/v1/session/:sessionId");
 
     const [span] = await finishedSpans();
     expect(span!.name).toBe("agent.channel.request");
