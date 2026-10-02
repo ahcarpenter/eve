@@ -8,6 +8,29 @@ last_updated: "2026-10-01"
 
 ## Decision
 
+### Revision after deep-module review
+
+The application and runtime interfaces are separate. Application scopes use
+`attempt`, `modelCall`, and `toolExecution`; attempts still emit `agent.step`.
+Domain result descriptions are required. A resolved promise does not imply
+approval or a successful tool result.
+
+The snapshot decision replaces the earlier `checkpointer` proposal. The runtime
+persists detached snapshots in its own checkpoint transaction. Tracing does not
+perform `load`, `save`, or `remove`. Select live or durable behavior explicitly
+at recorder construction, not through storage configuration.
+
+`createAiSdkTracing` selects SDK conversion and serialization. The application
+object exposes turn execution and SDK telemetry, not reservation or restoration.
+`createTraceRecorder` supplies operation-specific handles with discriminated
+completion outcomes. No second prepared-span durable driver remains.
+
+Implementation boundary still pending: eve uses the private generic runtime
+binding during adoption. The full conversion to typed recorder handles, corrupt
+snapshot recovery, and recorder-owned tool correlation must precede public release.
+The API sketches below record earlier proposals and require replacement before
+the design is accepted.
+
 Extract one neutral trace engine. Use the engine in eve before a public release.
 Add an AI SDK adapter for agents that do not use eve.
 
