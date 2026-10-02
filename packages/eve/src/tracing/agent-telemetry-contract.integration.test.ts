@@ -32,7 +32,7 @@ import {
 } from "#instrumentation/lifecycle.js";
 import { bindInstrumentationRuntime } from "#instrumentation/runtime.js";
 import { createAgentOtelInstrumentation } from "#tracing/agent-otel-provider.js";
-import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+import { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import { ContextAgentTraceStateStore } from "#tracing/agent-trace-context-store.js";
 import { AGENT_TRACE_CONTEXT_KEY } from "#tracing/agent-trace-context-codec.js";
 import { resolveToolCallAgentTrace } from "#tracing/agent-invocation-coordinator.js";

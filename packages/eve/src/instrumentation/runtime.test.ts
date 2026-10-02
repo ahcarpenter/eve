@@ -26,7 +26,7 @@ import {
   type InstrumentationRuntime,
   type InstrumentationStepScope,
 } from "#instrumentation/runtime.js";
-import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+import { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import { ContextAgentTraceStateStore } from "#tracing/agent-trace-context-store.js";
 import type { TraceCapturePolicy } from "#tracing/otel-declaration.js";
 import { readForwardedAudienceBaggage, writeForwardedAudienceBaggage } from "#protocol/baggage.js";

@@ -13,7 +13,7 @@ import {
 } from "#instrumentation/runtime.js";
 import { createLogger, formatError } from "#internal/logging.js";
 import { resolveInstrumentationEnvironment } from "#internal/application/dev-environment.js";
-import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+import { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import { ContextAgentTraceStateStore } from "#tracing/agent-trace-context-store.js";
 import { createAgentOtelInstrumentation } from "#tracing/agent-otel-provider.js";
 import { hasConversationRelease, type LocalTracesProcessor } from "#tracing/local-traces.js";

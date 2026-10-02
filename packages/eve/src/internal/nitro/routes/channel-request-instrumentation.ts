@@ -5,8 +5,6 @@ import {
   type TextMapGetter,
 } from "#compiled/@opentelemetry/api/index.js";
 import { getInstrumentationRuntime } from "#instrumentation/runtime.js";
-import { markAgentTraceContext } from "#tracing/agent-trace-context.js";
-import { withErrorContent } from "#tracing/error-content-context.js";
 import { eveTransportLifecycle } from "#tracing/adapters/eve/transports.js";
 
 export type ChannelRequestTrace = ReturnType<ReturnType<typeof eveTransportLifecycle>["request"]>;
@@ -37,11 +35,8 @@ export async function traceChannelRequest<T extends Response>(
     parent: trace.getSpan(parent)?.spanContext(),
     executionContext: parent,
   });
-  const active = markAgentTraceContext(
-    withErrorContent(trace.setSpan(parent, trace.wrapSpanContext(operation.reference)), false),
-  );
   try {
-    const response = await context.with(active, () => handler(operation));
+    const response = await operation.run(() => handler(operation));
     operation.completed(response.status);
     return response;
   } catch (error) {

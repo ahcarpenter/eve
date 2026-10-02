@@ -9,7 +9,7 @@ import {
   type InstrumentationSessionTransitionEvent,
   type InstrumentationUsage,
 } from "#instrumentation/lifecycle.js";
-import type { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+import type { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import { normalizeChannelAudience } from "#shared/channel-audience.js";
 import type { ChannelAudience } from "#shared/channel-audience.js";
 import type { TraceCapturePolicy } from "#tracing/otel-declaration.js";
@@ -31,6 +31,7 @@ import { ROOT_CONTEXT } from "#compiled/@opentelemetry/api/index.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
 import type { TraceLink } from "#tracing/core/types.js";
 import type { AgentTracing } from "#tracing/core/agent-tracing.js";
+import { accumulateUsage } from "#tracing/core/usage.js";
 
 interface EveSessionTracingInput {
   readonly lifecycle: AgentTracing["lifecycle"];
@@ -220,16 +221,7 @@ export function createEveSessionTracing(input: EveSessionTracingInput): EveSessi
       // Workflow replay restarts from pre-step state; distinct completed retries count.
       await input.stateStore.updateTurn(sessionId, turnId, (turn) => ({
         ...turn,
-        modelUsage: {
-          inputTokens:
-            usage.inputTokens === undefined
-              ? turn.modelUsage?.inputTokens
-              : (turn.modelUsage?.inputTokens ?? 0) + usage.inputTokens,
-          outputTokens:
-            usage.outputTokens === undefined
-              ? turn.modelUsage?.outputTokens
-              : (turn.modelUsage?.outputTokens ?? 0) + usage.outputTokens,
-        },
+        modelUsage: accumulateUsage(turn.modelUsage, usage),
       }));
     },
   };
@@ -280,14 +272,10 @@ function initialSessionContext(
       traceFlags: decision.action === "drop" ? 0 : handed.traceFlags,
     };
   }
-  const traceId = input.idGenerator.deriveTraceId(`session:${event.sessionId}`);
-  const sampled = decision.action === "record";
-  return {
-    isRemote: false,
-    spanId: input.idGenerator.deriveSpanId(`session:${event.sessionId}`),
-    traceFlags: sampled ? 1 : 0,
-    traceId,
-  };
+  return input.lifecycle.reserve({
+    key: `session:${event.sessionId}`,
+    traceFlags: decision.action === "record" ? 1 : 0,
+  });
 }
 
 function freshTurnContext(
@@ -295,14 +283,10 @@ function freshTurnContext(
   idempotencyKey: string,
   decision: AgentSessionTraceState["decision"],
 ): SpanContext {
-  const traceId = input.idGenerator.deriveTraceId(`turn:${idempotencyKey}`);
-  const sampled = decision?.action === "record";
-  return {
-    isRemote: false,
-    spanId: input.idGenerator.deriveSpanId(`turn:${idempotencyKey}`),
-    traceFlags: sampled ? 1 : 0,
-    traceId,
-  };
+  return input.lifecycle.reserve({
+    key: `turn:${idempotencyKey}`,
+    traceFlags: decision?.action === "record" ? 1 : 0,
+  });
 }
 
 function resolveSessionTraceDecision(

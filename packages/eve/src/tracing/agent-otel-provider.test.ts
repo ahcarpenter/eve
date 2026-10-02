@@ -26,7 +26,7 @@ import {
   createAgentOtelInstrumentation,
   type AgentOtelInstrumentationInput,
 } from "#tracing/agent-otel-provider.js";
-import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+import { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import { ContextAgentTraceStateStore } from "#tracing/agent-trace-context-store.js";
 import type { AgentTraceStateStore } from "#tracing/agent-trace-state.js";
 import { InMemoryAgentTraceStateStore } from "#internal/testing/in-memory-agent-trace-state-store.js";
@@ -44,7 +44,7 @@ import {
 } from "#instrumentation/lifecycle.js";
 import type { ChannelAudience } from "#shared/channel-audience.js";
 import { channelAudienceFromContext } from "#tracing/channel-audience-context.js";
-import { agentToolContentPolicy, agentToolSpanContext } from "#tracing/agent-tool-span-context.js";
+import { activeTraceOperation } from "#tracing/adapters/otel.js";
 import { contentFilteringProcessor } from "#tracing/content-span-processor.js";
 import { parseLocalTraceSegment } from "#tracing/local-trace-reader.js";
 import { CONTENT_ATTRIBUTE_LIMIT } from "#tracing/adapters/serialization.js";
@@ -2466,11 +2466,11 @@ describe("createAgentOtelInstrumentation", () => {
     await runtime.runInContext({ idempotencyKey: toolKey, scope, type: "tool.call" }, async () => {
       const active = withSpy.mock.calls[0]?.[0];
       expect(active).toBeDefined();
-      expect(agentToolContentPolicy(active!)).toEqual({
+      expect(activeTraceOperation(active!)?.capture).toMatchObject({
         recordInputs: false,
         recordOutputs: false,
       });
-      agentToolSpanContext(active!)?.mcp?.update({
+      activeTraceOperation(active!)?.mcp?.update({
         connectionName: "linear",
         method: "tools/call",
         toolName: "get_issue",
@@ -2949,7 +2949,7 @@ describe("createAgentOtelInstrumentation", () => {
     expect(withSpy).toHaveBeenCalledOnce();
     const active = withSpy.mock.calls[0]?.[0];
     expect(active).toBeDefined();
-    expect(agentToolSpanContext(active!)).toBeUndefined();
+    expect(activeTraceOperation(active!)?.type).toBe("model");
     withSpy.mockRestore();
   });
 

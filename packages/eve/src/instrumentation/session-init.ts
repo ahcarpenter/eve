@@ -29,8 +29,8 @@ import {
   isSampledTrace,
   resolveTracePolicy,
   resolveTracePolicyDecision,
-} from "#shared/trace-policy.js";
-import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+} from "#tracing/sampled-trace.js";
+import { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import { getInstrumentationRuntime } from "#instrumentation/runtime-global.js";
 import type { InstrumentationRuntime } from "#instrumentation/runtime.js";
 

@@ -5,7 +5,7 @@ import { AuthKey, ChannelInstrumentationKey, SessionTraceSeedKey } from "#contex
 import { initializeSessionInstrumentation } from "#instrumentation/session-init.js";
 import { registerInstrumentationRuntime } from "#instrumentation/runtime-global.js";
 import type { InstrumentationRuntime } from "#instrumentation/runtime.js";
-import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+import { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import type { TraceCapturePolicy } from "#tracing/otel-declaration.js";
 
 afterEach(() => {

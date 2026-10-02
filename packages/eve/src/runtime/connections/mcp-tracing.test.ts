@@ -23,10 +23,7 @@ import {
   withMcpToolCallSpan,
   withMcpToolsListSpan,
 } from "#runtime/connections/mcp-tracing.js";
-import {
-  withAgentToolContentPolicy,
-  withAgentToolSpanContext,
-} from "#tracing/agent-tool-span-context.js";
+import { liveOtelBackend } from "#tracing/adapters/otel.js";
 
 describe("MCP trace propagation", () => {
   let exporter: InMemorySpanExporter;
@@ -51,11 +48,23 @@ describe("MCP trace propagation", () => {
 
   it("injects configured propagation into params._meta and annotates the tool span", async () => {
     const setAttributes = vi.fn();
-    const toolContext = withAgentToolSpanContext(ROOT_CONTEXT, {
-      recordInputs: false,
-      recordOutputs: false,
-      mcp: { update: setAttributes, error() {}, arguments() {}, result() {} },
-    });
+    const capture = { emit: true, recordInputs: false, recordOutputs: false };
+    const backend = liveOtelBackend(provider.getTracer("test.mcp"));
+    let toolContext = ROOT_CONTEXT;
+    backend.run(
+      { traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1 },
+      capture,
+      () => {
+        toolContext = runtimeContext.active();
+      },
+      undefined,
+      {
+        type: "tool",
+        reference: { traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1 },
+        capture,
+        mcp: { update: setAttributes, error() {}, arguments() {}, result() {} },
+      },
+    );
     const fetcher = vi.fn(
       async (_request: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) =>
         new Response(null, { headers: { "mcp-session-id": "session-1" } }),
@@ -171,10 +180,15 @@ describe("MCP trace propagation", () => {
 
   it("propagates the fallback CLIENT span context for tools/call", async () => {
     const parent = runtimeTrace.getTracer("test.mcp").startSpan("parent");
-    const parentContext = withAgentToolContentPolicy(runtimeTrace.setSpan(ROOT_CONTEXT, parent), {
-      recordInputs: true,
-      recordOutputs: true,
-    });
+    const backend = liveOtelBackend(provider.getTracer("test.mcp"));
+    let parentContext = ROOT_CONTEXT;
+    backend.run(
+      parent.spanContext(),
+      { emit: true, recordInputs: true, recordOutputs: true },
+      () => {
+        parentContext = runtimeContext.active();
+      },
+    );
     const fetcher = vi.fn(
       async (_request: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) =>
         new Response(null, { headers: { "mcp-session-id": "session-1" } }),

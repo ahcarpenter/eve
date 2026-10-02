@@ -8,12 +8,11 @@ import {
 } from "#compiled/@opentelemetry/api/index.js";
 
 import type { AgentTraceStateStore } from "#tracing/agent-trace-state.js";
-import type { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+import type { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import { createAgentActionInstrumentation } from "#tracing/agent-action-instrumentation.js";
 import { createAgentApprovalInstrumentation } from "#tracing/agent-approval-instrumentation.js";
 import { createAgentChannelDeliveryInstrumentation } from "#tracing/agent-channel-delivery-instrumentation.js";
 import { createAgentToolInstrumentation } from "#tracing/agent-tool-instrumentation.js";
-import { markAgentTraceContext } from "#tracing/agent-trace-context.js";
 import { eveActivationMetadata } from "#tracing/adapters/eve/metadata.js";
 import { createAgentMemoryInstrumentation } from "#tracing/agent-memory-instrumentation.js";
 import { readGatewayCostData } from "#tracing/adapters/gateway.js";
@@ -22,7 +21,6 @@ import type { TraceCapturePolicy } from "#tracing/otel-declaration.js";
 import { isSampledTrace } from "#tracing/sampled-trace.js";
 import { createEveCapturePolicy } from "#tracing/adapters/eve/policy.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
-import { suppressTracing } from "#tracing/suppress-tracing.js";
 import type {
   InstrumentationStepAttemptMetadataEvent,
   InstrumentationAttemptScope,
@@ -39,8 +37,6 @@ import type {
 } from "#instrumentation/lifecycle.js";
 import { attemptIdempotencyKey } from "#instrumentation/lifecycle.js";
 import { type AgentSamplingOperation } from "#tracing/agent-span-contract.js";
-import { withErrorContent } from "#tracing/error-content-context.js";
-import { withAgentToolContentPolicy } from "#tracing/agent-tool-span-context.js";
 import { resolveInstrumentationEnvironment } from "#internal/application/dev-environment.js";
 import type { ConversationEnvironment } from "#shared/conversation-context.js";
 import { createEveTraceLifecycle } from "#tracing/adapters/eve/scopes.js";
@@ -83,7 +79,6 @@ export function createAgentOtelInstrumentation(
   const recordInputs = input.recordInputs ?? false;
   const recordOutputs = input.recordOutputs ?? false;
   const lifecycle = createEveTraceLifecycle(input);
-  const executionContexts = new WeakMap<InstrumentationAttemptScope, Map<string, Context>>();
   const attemptScopes = new Map<string, InstrumentationAttemptScope>();
   // A lost serverless worker retries the whole turn step from entry.
   const steps = new WeakMap<InstrumentationAttemptScope, SpanState>();
@@ -109,7 +104,6 @@ export function createAgentOtelInstrumentation(
   const tools = createAgentToolInstrumentation({
     lifecycle,
     actionContextFor: actions.contextFor,
-    idGenerator: input.idGenerator,
     recordInputs,
     recordOutputs,
     resolveFallback: (event) => {
@@ -160,7 +154,11 @@ export function createAgentOtelInstrumentation(
           parent: turn.context,
           reference: {
             ...turn.context,
-            spanId: input.idGenerator.deriveSpanId(attemptIdempotencyKey(event.scope)),
+            spanId: lifecycle.reserve({
+              key: attemptIdempotencyKey(event.scope),
+              parent: turn.context,
+              traceFlags: turn.context.traceFlags,
+            }).spanId,
           },
           links:
             activeSpanContext === undefined || activeSpanContext.traceId === turn.context.traceId
@@ -191,8 +189,7 @@ export function createAgentOtelInstrumentation(
 
   const onStepTerminal = async (event: InstrumentationStepAttemptTerminalEvent): Promise<void> => {
     const scope = attemptScopes.get(event.scope.attemptId) ?? event.scope;
-    executionContexts.delete(scope);
-    drainOpenSpans({ ...event, scope });
+    await drainOpenSpans({ ...event, scope });
     await tools.drain(
       event.scope.attemptId,
       event.type === "step.attempt.failed" ? { error: event.error } : undefined,
@@ -241,14 +238,12 @@ export function createAgentOtelInstrumentation(
       runtime,
       context: trace.setSpan(attempt.context, trace.wrapSpanContext(runtime.reference)),
     };
-    getExecutionContexts(event.scope).set(event.idempotencyKey, state.context);
     getSpanStates(modelSpans, event.scope).set(event.idempotencyKey, state);
   };
 
   const onModelCallTerminal = async (
     event: InstrumentationModelCallTerminalEvent,
   ): Promise<void> => {
-    executionContexts.get(event.scope)?.delete(event.idempotencyKey);
     const state = takeSpanState(modelSpans, event.scope, event.idempotencyKey);
     if (state === undefined) return;
     if (event.type === "model.call.failed") {
@@ -258,8 +253,6 @@ export function createAgentOtelInstrumentation(
       await state.runtime.finish({
         model: { ...event, content: recordOutputs ? event.content : undefined },
       });
-      const attempt = steps.get(event.scope);
-      if (attempt !== undefined) await attempt.runtime.usage(event.usage);
     }
   };
 
@@ -315,47 +308,37 @@ export function createAgentOtelInstrumentation(
     async runInContext(operation, execute) {
       if (operation.type === "memory.operation") return memory.runInContext(operation, execute);
       const scope = attemptScopes.get(operation.scope.attemptId) ?? operation.scope;
-      const contexts = executionContexts.get(scope);
-      let parent =
+      const ceiling = { emit: true, ...(await capturePolicy.forOperation(operation.scope)) };
+      const active =
         operation.type === "model.call"
-          ? contexts?.get(operation.idempotencyKey)
-          : tools.contextFor(operation.scope.attemptId, operation.idempotencyKey);
-      if (parent === undefined) {
+          ? modelSpans.get(scope)?.get(operation.idempotencyKey)?.runtime
+          : tools.operationFor(operation.scope.attemptId, operation.idempotencyKey);
+      if (active !== undefined) return active.run(execute, ceiling);
+      {
         const turn = await input.stateStore.getTurn(
           operation.scope.sessionId,
           operation.scope.turnId,
         );
         if (turn !== undefined) {
-          parent = withChannelAudience(
+          const parent = withChannelAudience(
             contextFromSpanContext(turn.context),
             operation.scope.channelAudience,
           );
-          if (!isSampledTrace(turn.context)) parent = suppressTracing(parent);
+          return lifecycle.run(
+            turn.context,
+            { ...ceiling, emit: isSampledTrace(turn.context) },
+            execute,
+            parent,
+          );
         }
       }
-      const toolContentPolicy = await capturePolicy.forOperation(operation.scope);
-      if (parent === undefined) return execute();
-      const withErrorPolicy = withErrorContent(parent, toolContentPolicy.recordOutputs);
-      const operationContext =
-        operation.type === "tool.call"
-          ? withAgentToolContentPolicy(withErrorPolicy, toolContentPolicy)
-          : withErrorPolicy;
-      return context.with(markAgentTraceContext(operationContext), execute);
+      return execute();
     },
   };
 
-  function getExecutionContexts(scope: InstrumentationAttemptScope): Map<string, Context> {
-    let state = executionContexts.get(scope);
-    if (state === undefined) {
-      state = new Map();
-      executionContexts.set(scope, state);
-    }
-    return state;
-  }
-
-  function drainOpenSpans(event: InstrumentationStepAttemptTerminalEvent): void {
+  async function drainOpenSpans(event: InstrumentationStepAttemptTerminalEvent): Promise<void> {
     for (const state of modelSpans.get(event.scope)?.values() ?? []) {
-      void state.runtime.finish({
+      await state.runtime.finish({
         failed: event.type === "step.attempt.failed",
         error: event.type === "step.attempt.failed" ? event.error : undefined,
       });

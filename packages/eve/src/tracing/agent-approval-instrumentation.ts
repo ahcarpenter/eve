@@ -12,7 +12,7 @@ import { traceSessionIdOf } from "#tracing/adapters/eve/checkpointer.js";
 import { decodeTraceSessionId } from "#tracing/agent-trace-context-codec.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
 import type { AgentActionContext } from "#tracing/agent-action-instrumentation.js";
-import type { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+import type { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import { normalizeChannelAudience, type ChannelAudience } from "#shared/channel-audience.js";
 import { eveScopeRecord, checkpointContent } from "#tracing/adapters/eve/checkpointer.js";
 import type { AgentTracing } from "#tracing/core/agent-tracing.js";
@@ -98,7 +98,11 @@ export function createAgentApprovalInstrumentation(input: {
           frameworkVersion: input.frameworkVersion,
           reference: {
             ...state.parent,
-            spanId: input.idGenerator.deriveSpanId(`approval:${event.idempotencyKey}`),
+            spanId: input.lifecycle.reserve({
+              key: `approval:${event.idempotencyKey}`,
+              parent: state.parent,
+              traceFlags: state.parent.traceFlags,
+            }).spanId,
           },
         },
         event.idempotencyKey,

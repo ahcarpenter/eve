@@ -14,12 +14,9 @@ import {
   applyLiveDeliveryAudienceCeiling,
   resolveForwardedTraceSeed,
 } from "#shared/forwarded-trace-policy.js";
-import { isAgentTraceContext, markAgentTraceContext } from "#tracing/agent-trace-context.js";
 import type { AgentTraceStateStore } from "#tracing/agent-trace-state.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
-import { withErrorContent } from "#tracing/lib/adapters/otel.js";
-import { isSampledTrace } from "#shared/trace-policy.js";
-import { suppressTracing } from "#tracing/suppress-tracing.js";
+import { isSampledTrace } from "#tracing/sampled-trace.js";
 import type { ConversationEnvironment } from "#shared/conversation-context.js";
 import { eveScopeRecord } from "#tracing/adapters/eve/checkpointer.js";
 import type { RuntimeScope } from "#tracing/core/scopes.js";
@@ -40,7 +37,7 @@ interface AgentMemoryInstrumentation {
 
 export function createAgentMemoryInstrumentation(input: {
   readonly lifecycle: AgentTracing["lifecycle"];
-  readonly idGenerator: import("#tracing/agent-span-id-generator.js").AgentSpanIdGenerator;
+  readonly idGenerator: import("#tracing/adapters/otel-ids.js").AgentSpanIdGenerator;
   readonly environment: ConversationEnvironment;
   readonly recordOutputs?: boolean;
   readonly stateStore: AgentTraceStateStore;
@@ -52,7 +49,7 @@ export function createAgentMemoryInstrumentation(input: {
     event: InstrumentationMemoryOperationEvent,
   ): Promise<Context | undefined> => {
     const active = context.active();
-    if (isAgentTraceContext(active)) return active;
+    if (input.lifecycle.active() !== undefined) return active;
 
     const session = await input.stateStore.getSession(event.sessionId);
     if (event.turnId !== undefined) {
@@ -127,7 +124,6 @@ export function createAgentMemoryInstrumentation(input: {
             contextFromSpanContext(turn.context),
             session?.channelAudience,
           );
-          if (!isSampledTrace(turn.context)) parent = suppressTracing(parent);
         }
       }
       if (parent === undefined && session !== undefined) {
@@ -135,7 +131,6 @@ export function createAgentMemoryInstrumentation(input: {
           contextFromSpanContext(session.context),
           session.channelAudience,
         );
-        if (!isSampledTrace(session.context)) parent = suppressTracing(parent);
       }
       const seed = resolveForwardedTraceSeed(contextStorage.getStore()?.get(SessionTraceSeedKey));
       const decision = seed?.decision ?? session?.decision;
@@ -148,17 +143,18 @@ export function createAgentMemoryInstrumentation(input: {
               seed?.forwardedTracePolicy,
               input.environment,
             );
+      const capture = {
+        emit:
+          parent !== undefined &&
+          ((trace.getSpan(parent)?.spanContext().traceFlags ?? 0) & 1) !== 0,
+        recordInputs: effective?.action === "record" && effective.recordInputs,
+        recordOutputs: recordOutputs && effective?.action === "record" && effective.recordOutputs,
+      };
+      const runtime = spans.get(operation.idempotencyKey)?.runtime;
+      if (runtime !== undefined) return await runtime.run(execute, capture);
       return parent === undefined
         ? await execute()
-        : await context.with(
-            markAgentTraceContext(
-              withErrorContent(
-                parent,
-                recordOutputs && effective?.action === "record" && effective.recordOutputs,
-              ),
-            ),
-            execute,
-          );
+        : await input.lifecycle.run(trace.getSpan(parent)!.spanContext(), capture, execute, parent);
     },
   };
 }

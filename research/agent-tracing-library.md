@@ -169,6 +169,16 @@ Configure every adapter through `createAgentTracing`. Consumers use callback or
 lifecycle methods for usage, protocol metadata, payloads, and errors.
 Attribute builders are private implementation details, not API entry points.
 
+The lifecycle owns semantic activation, pending tool parentage, reference
+reservation, and usage accumulation. `lifecycle.active()` exposes the current
+semantic operation to adapters. The OTel backend retains that operation across
+async calls and intersects capture ceilings. MCP adapters enrich an active tool;
+they create a fallback operation only when no tool owns execution.
+
+eve supplies stable correlation keys, trusted policy, and existing checkpoint
+records. It does not buffer tool telemetry or allocate child span IDs itself.
+Host-owned durable totals remain in the existing checkpoint format.
+
 ## Span topology and lifetime
 
 ```text

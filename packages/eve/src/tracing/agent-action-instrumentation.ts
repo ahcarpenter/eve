@@ -13,8 +13,8 @@ import type {
 } from "#instrumentation/lifecycle.js";
 import { actionIdempotencyKey, attemptIdempotencyKey } from "#instrumentation/lifecycle.js";
 import { traceSessionIdOf } from "#tracing/adapters/eve/checkpointer.js";
-import { contentAttribute, textContentAttribute } from "#tracing/adapters/serialization.js";
-import type { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+import { contentAttribute } from "#tracing/adapters/serialization.js";
+import type { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import type { AgentActionTraceState, AgentTraceStateStore } from "#tracing/agent-trace-state.js";
 import { normalizeChannelAudience } from "#shared/channel-audience.js";
 import { isSampledTrace } from "#shared/trace-policy.js";
@@ -69,14 +69,20 @@ export function createAgentActionInstrumentation(input: {
       kind: event.kind,
       name: event.name,
       parent: {
-        spanId: input.idGenerator.deriveSpanId(attemptIdempotencyKey(event.scope)),
-        traceFlags: traceContext.traceFlags,
-        traceId: traceContext.traceId,
+        ...input.lifecycle.reserve({
+          key: attemptIdempotencyKey(event.scope),
+          parent: traceContext,
+          traceFlags: traceContext.traceFlags,
+        }),
       },
       rootSessionId: event.scope.rootSessionId ?? event.scope.sessionId,
       traceSessionId: traceSessionIdOf(event.scope),
       sessionId: event.scope.sessionId,
-      spanId: input.idGenerator.deriveSpanId(`action:${event.idempotencyKey}`),
+      spanId: input.lifecycle.reserve({
+        key: `action:${event.idempotencyKey}`,
+        parent: traceContext,
+        traceFlags: traceContext.traceFlags,
+      }).spanId,
       startTimeMs: Date.now(),
       stepIndex: event.scope.stepIndex,
       turnId: event.scope.turnId,
@@ -174,17 +180,10 @@ export function createAgentActionInstrumentation(input: {
           ? event.output.error
           : undefined;
     const failed = event.type === "action.failed" || event.output.type === "error";
-    const normalized = normalizeActionError(error);
-    if (
-      normalized instanceof Error &&
-      event.type === "action.failed" &&
-      event.errorCode !== undefined
-    )
-      normalized.name = event.errorCode;
     await scope.finish({
       outcome: event.outcome,
       failed,
-      error: normalized,
+      error,
       errorCode: event.type === "action.failed" ? event.errorCode : undefined,
       usage: event.usage,
       output:
@@ -217,25 +216,4 @@ function contextFromActionState(state: AgentActionTraceState): Context {
     trace.setSpan(ROOT_CONTEXT, trace.wrapSpanContext({ ...state.parent, isRemote: false })),
     state.channelAudience,
   );
-}
-
-function normalizeActionError(error: unknown): unknown {
-  if (error instanceof Error || error === undefined) {
-    return error;
-  }
-  const detail = serializedErrorDetail(error);
-  if (detail === undefined) {
-    return undefined;
-  }
-  const normalized = new Error(detail);
-  return normalized;
-}
-
-function serializedErrorDetail(error: unknown): string | undefined {
-  if (typeof error === "string") return textContentAttribute(error);
-  const serialized = contentAttribute(error);
-  if (typeof error !== "object" || error === null || Array.isArray(error)) return serialized;
-  const message = Reflect.get(error, "message");
-  if (typeof message !== "string") return serialized;
-  return textContentAttribute(serialized === undefined ? message : `${message}\n${serialized}`);
 }
