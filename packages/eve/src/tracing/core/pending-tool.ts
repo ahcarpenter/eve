@@ -11,10 +11,13 @@ import { snapshotRecord } from "#tracing/core/snapshot.js";
 import type { ContentSerializer } from "#tracing/core/model.js";
 import type { ScopeIdentity } from "#tracing/core/scope-lifecycle.js";
 import type { DurableTraceBackend } from "#tracing/core/types.js";
+import { runTraceContext } from "#tracing/core/context.js";
+import { capturedScopeData } from "#tracing/core/scope-completion.js";
 
 export interface ToolCallInput {
   identity: ScopeIdentity;
   executionKey: string;
+  referenceKey?: string;
   actionKey: string;
   name: string;
   callId: string;
@@ -35,7 +38,7 @@ export function toolCallRecord(
     key: input.executionKey,
     identity: input.identity,
     reference: backend.reserveReference({
-      key: input.executionKey,
+      key: input.referenceKey ?? input.executionKey,
       parent: input.fallback,
       traceFlags: input.fallback.traceFlags,
     }),
@@ -67,10 +70,22 @@ export function pendingTool(input: {
   const updates: McpUpdate[] = [];
   let pendingError: { error?: unknown; type?: string } | undefined;
   let capture = input.record.capture;
+  function bounded(value: unknown) {
+    const text = input.serializer.json(value);
+    if (text === undefined) return undefined;
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return undefined;
+    }
+  }
   const mcp = {
     update(update: McpUpdate) {
       if (scope !== undefined) scope.mcp.update(update);
-      else if (updates.length < 256) updates.push(update);
+      else if (updates.length < 256) {
+        const encoded = JSON.stringify(update);
+        if (encoded.length <= 8192) updates.push(JSON.parse(encoded) as McpUpdate);
+      }
     },
     error(error?: unknown, type?: string) {
       pendingError = {
@@ -114,16 +129,39 @@ export function pendingTool(input: {
         intersectCapture(capture, ceiling),
         input.backend.active?.()?.capture,
       );
+      input = {
+        ...input,
+        record: { ...input.record, capture, data: capturedScopeData(input.record.data, capture) },
+      };
+      if (!capture.recordOutputs) {
+        if (pendingError !== undefined) pendingError.error = undefined;
+        if (terminal !== undefined) terminal = { ...terminal, output: undefined, error: undefined };
+      }
       if (scope !== undefined) return scope.run(execute, capture);
-      return input.backend.run(input.record.reference, capture, execute, input.executionContext, {
-        type: "tool",
-        reference: input.record.reference,
+      return runTraceContext(
+        input.backend,
+        input.record.reference,
         capture,
-        mcp,
-      });
+        execute,
+        input.executionContext,
+        {
+          type: "tool",
+          reference: input.record.reference,
+          capture,
+          mcp,
+        },
+      );
     },
     async finish(result: ScopeTerminal) {
-      terminal = result;
+      terminal = {
+        ...result,
+        output: capture.recordOutputs ? bounded(result.output) : undefined,
+        error: capture.recordOutputs
+          ? result.error instanceof Error
+            ? new Error(input.serializer.text(result.error.message) ?? "")
+            : bounded(result.error)
+          : undefined,
+      };
       if (scope !== undefined) await scope.finish(result);
     },
     async drain(result: ScopeTerminal = {}) {

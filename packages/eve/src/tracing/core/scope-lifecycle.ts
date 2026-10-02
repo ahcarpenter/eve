@@ -41,6 +41,7 @@ export interface ScopeRecord {
   readonly startTimeMs: number;
   readonly links?: readonly TraceLink[];
   readonly usage?: { readonly inputTokens?: number; readonly outputTokens?: number };
+  readonly usageKeys?: readonly string[];
   readonly childIndex?: number;
   readonly stepIndex?: number;
   readonly outputContext?: Readonly<Record<string, string>>;
@@ -66,7 +67,7 @@ export interface RuntimeScope {
   completed(result?: ScopeTerminal): Promise<void>;
   failed(error: unknown): Promise<void>;
   abandon(): void;
-  usage(usage: Usage): Promise<void>;
+  usage(usage: Usage, callKey?: string): Promise<void>;
   nextStep(): number;
   modelSelected(modelId: string, provider: string): void;
   error(error?: unknown, errorType?: string): void;

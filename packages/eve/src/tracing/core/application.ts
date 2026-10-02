@@ -12,7 +12,16 @@ export interface TurnScope {
     options: { stepIndex: number; attempt: number },
     execute: (attempt: StepScope) => Promise<T>,
   ): Promise<T>;
-  memory<T>(options: MemoryOptions, execute: () => Promise<MemoryResult<T>>): Promise<T>;
+  searchMemory<T>(
+    options: Omit<MemoryOptions, "operation">,
+    execute: () => Promise<T>,
+    describe: (value: T) => Omit<MemoryResult<T>, "value">,
+  ): Promise<T>;
+  writeMemory<T>(
+    options: Omit<MemoryOptions, "operation">,
+    execute: () => Promise<T>,
+    describe: (value: T) => Omit<MemoryResult<T>, "value">,
+  ): Promise<T>;
 }
 export interface StepScope {
   modelCall<T>(
@@ -25,7 +34,16 @@ export interface StepScope {
     execute: (action: ActionScope) => Promise<T>,
     describe: (value: T) => ActionResult,
   ): Promise<T>;
-  memory<T>(options: MemoryOptions, execute: () => Promise<MemoryResult<T>>): Promise<T>;
+  searchMemory<T>(
+    options: Omit<MemoryOptions, "operation">,
+    execute: () => Promise<T>,
+    describe: (value: T) => Omit<MemoryResult<T>, "value">,
+  ): Promise<T>;
+  writeMemory<T>(
+    options: Omit<MemoryOptions, "operation">,
+    execute: () => Promise<T>,
+    describe: (value: T) => Omit<MemoryResult<T>, "value">,
+  ): Promise<T>;
 }
 export interface ActionScope {
   toolExecution<T>(
@@ -38,7 +56,16 @@ export interface ActionScope {
     execute: () => Promise<T>,
     describe: (value: T) => { outcome: "approved" | "denied" | "cancelled" },
   ): Promise<T>;
-  memory<T>(options: MemoryOptions, execute: () => Promise<MemoryResult<T>>): Promise<T>;
+  searchMemory<T>(
+    options: Omit<MemoryOptions, "operation">,
+    execute: () => Promise<T>,
+    describe: (value: T) => Omit<MemoryResult<T>, "value">,
+  ): Promise<T>;
+  writeMemory<T>(
+    options: Omit<MemoryOptions, "operation">,
+    execute: () => Promise<T>,
+    describe: (value: T) => Omit<MemoryResult<T>, "value">,
+  ): Promise<T>;
 }
 export type ToolResult =
   | { outcome: "completed"; output?: unknown }

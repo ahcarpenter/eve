@@ -105,7 +105,9 @@ export function createTracingRuntime<TMcp = unknown>(input: {
           { key: JSON.stringify([turn.runId, turn.turnId]), links },
         );
       } catch {
-        return execute(disabledTurn());
+        return input.adapter.backend.suppressed === undefined
+          ? execute(disabledTurn())
+          : input.adapter.backend.suppressed(() => execute(disabledTurn()));
       }
       try {
         await scope.started();
@@ -143,4 +145,5 @@ export function createAgentTracing(input: {
   return { turn: recorder.turn };
 }
 
-export type AgentTracing = ReturnType<typeof createTracingRuntime>;
+export type TracingRuntime = ReturnType<typeof createTracingRuntime>;
+export type AgentTracing = ReturnType<typeof createAgentTracing>;

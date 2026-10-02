@@ -17,6 +17,94 @@ import { createAiSdkTracing } from "#tracing/adapters/ai-sdk.js";
 import { createTraceRecorder } from "#tracing/core/recorder.js";
 
 describe("constructed agent trace scopes", () => {
+  it("rejects corrupt snapshots and detaches bounded content before restore", async () => {
+    const idGenerator = new AgentSpanIdGenerator();
+    const provider = new BasicTracerProvider({ idGenerator });
+    try {
+      const output = durableOtelBackend({
+        tracer: provider.getTracer("snapshots"),
+        idGenerator,
+        samplesTrace: () => true,
+      });
+      const recorder = createTraceRecorder({
+        output,
+        serializer: aiSdkContentSerializer,
+        mode: "durable",
+      });
+      expect(
+        await recorder.restore(
+          { version: 99 },
+          { emit: true, recordInputs: true, recordOutputs: true },
+        ),
+      ).toBeUndefined();
+      const turn = await recorder.beginTurn({
+        identity: {
+          conversationId: "conversation",
+          runId: "run",
+          turnId: "turn",
+          framework: { name: "custom", version: "1" },
+        },
+        metadata: { sequence: 0 },
+        capture: { emit: true, recordInputs: true, recordOutputs: true },
+        binding: { key: "turn" },
+      });
+      const payload = { value: "before" };
+      const action = await (
+        await turn.attempt({ index: 0 }, "attempt")
+      ).action({ callId: "call", name: "lookup", arguments: payload }, "action");
+      const snapshot = action.snapshot();
+      payload.value = "after";
+      expect(JSON.stringify(snapshot)).toContain("before");
+      expect(JSON.stringify(snapshot)).not.toContain("after");
+      const restored = await recorder.restore(snapshot, {
+        emit: true,
+        recordInputs: false,
+        recordOutputs: false,
+      });
+      expect(JSON.stringify(restored?.snapshot())).not.toContain("before");
+      expect(restored?.reference).toEqual(action.reference);
+      await action.run(async () => undefined, {
+        emit: true,
+        recordInputs: false,
+        recordOutputs: false,
+      });
+      expect(JSON.stringify(action.snapshot())).not.toContain("after");
+    } finally {
+      await provider.shutdown();
+    }
+  });
+
+  it("preserves results and errors when serializers and result descriptions fail", async () => {
+    const provider = new BasicTracerProvider();
+    try {
+      const serializer = {
+        ...aiSdkContentSerializer,
+        json() {
+          throw new Error("serializer");
+        },
+      };
+      const tracing = createAgentTracing({
+        adapter: { backend: liveOtelBackend(provider.getTracer("failures")), serializer },
+        content: { recordInputs: true, recordOutputs: true },
+      });
+      const result = await tracing.turn(
+        { conversationId: "c", runId: "r", turnId: "t", sequence: 0 },
+        (turn) =>
+          turn.attempt({ stepIndex: 0, attempt: 0 }, (attempt) =>
+            attempt.action(
+              { callId: "call", name: "lookup", arguments: { value: "secret" } },
+              async () => "original",
+              () => {
+                throw new Error("description");
+              },
+            ),
+          ),
+      );
+      expect(result).toBe("original");
+    } finally {
+      await provider.shutdown();
+    }
+  });
   it("separates application tracing from typed runtime operations and records denial explicitly", async () => {
     const exporter = new InMemorySpanExporter();
     const provider = new BasicTracerProvider({
@@ -95,18 +183,18 @@ describe("constructed agent trace scopes", () => {
       });
       const parent = { traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1 };
       const action = { ...parent, spanId: "3".repeat(16) };
-      const operation = tracing.lifecycle.pendingTool({
-        key: "tool",
+      const operation = tracing.lifecycle.toolCall({
+        executionKey: "tool",
+        actionKey: "action",
+        callId: "call",
+        name: "lookup",
         identity: {
           conversationId: "conversation",
           runId: "run",
           turnId: "turn",
           framework: { name: "custom", version: "1" },
         },
-        data: { type: "tool", options: { callId: "call", name: "lookup" } },
-        parent,
-        reference: tracing.lifecycle.reserve({ key: "tool", parent, traceFlags: 1 }),
-        startTimeMs: Date.now(),
+        fallback: parent,
         capture: { emit: true, recordInputs: false, recordOutputs: false },
       });
       operation.mcp.update({ connectionName: "catalog", method: "tools/call", requestId: "7" });

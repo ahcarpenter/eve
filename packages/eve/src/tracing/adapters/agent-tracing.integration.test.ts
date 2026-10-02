@@ -354,15 +354,14 @@ describe("standalone agent tracing", () => {
                 async () => "private response",
                 () => ({ outcome: "approved" }),
               );
-              await action.memory(
+              await action.searchMemory(
                 {
-                  operation: "search_memory",
                   phase: "retrieve",
                   slot: "history",
                   storeId: "store",
                 },
-                async () => ({
-                  value: null,
+                async () => null,
+                () => ({
                   recordCount: 1,
                   records: [{ content: "Permitted record" }],
                 }),

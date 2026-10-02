@@ -56,10 +56,11 @@ oversized or malformed content is omitted. Capture permissions can decrease but
 cannot increase. A later local decrease cannot remove already exported or
 committed content. The runtime owns concurrent writes and export deduplication.
 
-eve's internal codec retains its existing checkpoint formats. During migration,
-the private runtime binding still uses generic lifecycle handles; those are not
-part of the application surface. Tool-call bindings accept semantic input and
-reserve references internally rather than requiring eve to build tool records.
+eve's internal codec retains its existing checkpoint formats. eve uses typed
+recorder handles and explicit completion outcomes. Tool-call bindings accept
+semantic inputs; the recorder owns reservation, correlation, late action
+attachment, and fallback completion. Corrupt snapshots disable tracing for the
+affected operation without stopping valid runtime work.
 
 ## Output and protocol bindings
 

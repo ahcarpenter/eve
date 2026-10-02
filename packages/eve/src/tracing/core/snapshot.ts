@@ -13,6 +13,18 @@ export function validSnapshot(value: unknown, requireVersion = true): value is S
       !Number.isFinite(record.startTimeMs)
     )
       return false;
+    if (record.reference.traceFlags !== 0 && record.reference.traceFlags !== 1) return false;
+    if (
+      record.reference.tracestate !== undefined &&
+      (typeof record.reference.tracestate !== "string" || record.reference.tracestate.length > 512)
+    )
+      return false;
+    if (
+      record.parent !== undefined &&
+      (!/^[a-f0-9]{32}$/u.test(record.parent.traceId) ||
+        !/^[a-f0-9]{16}$/u.test(record.parent.spanId))
+    )
+      return false;
     if (
       ![
         record.identity.conversationId,
@@ -23,6 +35,38 @@ export function validSnapshot(value: unknown, requireVersion = true): value is S
       ].every((v) => typeof v === "string")
     )
       return false;
+    const options = record.data.options as unknown as Record<string, unknown>;
+    switch (record.data.type) {
+      case "activation":
+        if (!Number.isSafeInteger(options.sequence)) return false;
+        break;
+      case "step":
+        if (!Number.isSafeInteger(options.index)) return false;
+        break;
+      case "model":
+        if (typeof options.provider !== "string" || typeof options.modelId !== "string")
+          return false;
+        break;
+      case "tool":
+      case "action":
+        if (typeof options.callId !== "string" || typeof options.name !== "string") return false;
+        break;
+      case "approval":
+        if (
+          typeof options.requestId !== "string" ||
+          typeof options.callId !== "string" ||
+          typeof options.actionName !== "string"
+        )
+          return false;
+        break;
+      case "memory":
+        if (
+          (options.operation !== "search_memory" && options.operation !== "upsert_memory") ||
+          ![options.phase, options.slot, options.storeId].every((v) => typeof v === "string")
+        )
+          return false;
+        break;
+    }
     if (
       !/^[a-f0-9]{32}$/u.test(record.reference.traceId) ||
       !/^[a-f0-9]{16}$/u.test(record.reference.spanId) ||
@@ -57,33 +101,27 @@ export function snapshotRecord(record: ScopeRecord, serializer: ContentSerialize
   try {
     json = serializer.json(data);
   } catch {}
-  if (json === undefined || new TextEncoder().encode(json).length > 32768)
-    return JSON.parse(
-      JSON.stringify({
-        ...record,
-        version: 1,
-        data: capturedScopeData(data, {
-          emit: record.capture.emit,
-          recordInputs: false,
-          recordOutputs: false,
-        }),
-      }),
-    ) as ScopeRecord;
+  const fallback = () => {
+    let structural = capturedScopeData(data, {
+      emit: record.capture.emit,
+      recordInputs: false,
+      recordOutputs: false,
+    });
+    if (structural.type === "step")
+      structural = { ...structural, options: { ...structural.options, runtimeContext: undefined } };
+    if (structural.type === "model")
+      structural = { ...structural, options: { ...structural.options, runtimeContext: undefined } };
+    return JSON.parse(JSON.stringify({ ...record, version: 1, data: structural })) as ScopeRecord;
+  };
+  if (json === undefined || new TextEncoder().encode(json).length > 32768) return fallback();
   try {
-    return JSON.parse(
+    const snapshot = JSON.parse(
       JSON.stringify({ ...record, version: 1, data: JSON.parse(json) }),
     ) as ScopeRecord;
+    return new TextEncoder().encode(JSON.stringify(snapshot)).length <= 65536
+      ? snapshot
+      : fallback();
   } catch {
-    return JSON.parse(
-      JSON.stringify({
-        ...record,
-        version: 1,
-        data: capturedScopeData(data, {
-          emit: record.capture.emit,
-          recordInputs: false,
-          recordOutputs: false,
-        }),
-      }),
-    ) as ScopeRecord;
+    return fallback();
   }
 }

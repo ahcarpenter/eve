@@ -62,13 +62,21 @@ export function createTraceRecorder(input: {
     },
     toolCall(input: ToolCallInput & { group: string }) {
       const previous = tools.get(input.executionKey);
-      if (previous !== undefined) return previous.operation;
-      const operation = runtime.toolCall(input);
+      if (previous !== undefined) return;
+      let operation;
+      try {
+        operation = runtime.toolCall(input);
+      } catch {
+        report();
+        return undefined;
+      }
       tools.set(input.executionKey, { actionKey: input.actionKey, group: input.group, operation });
-      return operation;
     },
     toolExecution(key: string) {
-      return tools.get(key)?.operation;
+      const operation = tools.get(key)?.operation;
+      return operation === undefined
+        ? undefined
+        : { run: operation.run, reference: operation.reference };
     },
     async actionAvailable(
       key: string,
@@ -77,25 +85,40 @@ export function createTraceRecorder(input: {
     ) {
       for (const [keyId, tool] of tools)
         if (tool.actionKey === key) {
-          await tool.operation.attach(parent, executionContext);
+          try {
+            await tool.operation.attach(parent, executionContext);
+          } catch {
+            report();
+            tools.delete(keyId);
+          }
           if (tool.operation.finished) tools.delete(keyId);
         }
     },
     async completeTool(key: string, result: import("#tracing/core/scopes.js").ToolResult) {
       const tool = tools.get(key);
       if (tool === undefined) return;
-      await tool.operation.finish({
-        ...result,
-        failed: result.outcome === "failed",
-        errorCode: "errorType" in result ? result.errorType : undefined,
-      });
+      try {
+        await tool.operation.finish({
+          ...result,
+          failed: result.outcome === "failed",
+          errorCode: "errorType" in result ? result.errorType : undefined,
+        });
+      } catch {
+        report();
+        tools.delete(key);
+      }
       if (tool.operation.finished) tools.delete(key);
     },
     async endAttempt(group: string, failure?: { error: unknown }) {
       for (const [key, tool] of tools)
         if (tool.group === group) {
-          await tool.operation.drain({ failed: failure !== undefined, error: failure?.error });
-          tools.delete(key);
+          try {
+            await tool.operation.drain({ failed: failure !== undefined, error: failure?.error });
+          } catch {
+            report();
+          } finally {
+            tools.delete(key);
+          }
         }
     },
     async beginTurn(input: {

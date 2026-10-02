@@ -11,12 +11,15 @@ export type {
 } from "#tracing/core/operations.js";
 export type {
   AgentTracing,
-  TracingAdapter,
   ActivationMetadata,
   TurnInput,
   TurnScope,
 } from "#tracing/core/agent-tracing.js";
-export type { StepScope, ActionScope, ScopeRecord, RuntimeBinding } from "#tracing/core/scopes.js";
+export type {
+  StepScope as AttemptTrace,
+  ActionScope as ActionTrace,
+  ScopeRecord as TraceSnapshot,
+} from "#tracing/core/scopes.js";
 export type { McpLifecycle, McpUpdate } from "#tracing/core/mcp.js";
 export type {
   ActionKind,

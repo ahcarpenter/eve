@@ -8,7 +8,7 @@ import {
 
 import type { McpLifecycle, McpUpdate } from "#tracing/core/mcp.js";
 import { activeTraceOperation } from "#tracing/adapters/otel.js";
-import type { AgentTracing } from "#tracing/core/agent-tracing.js";
+import type { TracingRuntime } from "#tracing/core/agent-tracing.js";
 import { truncateTelemetryText } from "#tracing/telemetry-budget.js";
 import { isObject } from "#shared/guards.js";
 
@@ -100,7 +100,7 @@ function injectMcpTraceContext(
   };
 }
 
-export function createMcpTracing(lifecycle: AgentTracing["lifecycle"]) {
+export function createMcpTracing(lifecycle: TracingRuntime["lifecycle"]) {
   return {
     async list<T>(input: {
       readonly connectionName: string;

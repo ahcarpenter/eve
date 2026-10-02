@@ -11,7 +11,13 @@ import type {
 import type { CaptureDecision } from "#tracing/core/types.js";
 import type { ActionResult, ToolResult } from "#tracing/core/scopes.js";
 
-type Failure = { outcome: "failed"; errorType: string; error?: unknown };
+type Failure = {
+  outcome: "failed";
+  errorType: string;
+  error?: unknown;
+  usage?: ScopeTerminal["usage"];
+  endTimeMs?: number;
+};
 type TurnCompletion =
   | { outcome: "completed" | "cancelled"; usage?: ScopeTerminal["usage"] }
   | Failure;
@@ -37,7 +43,7 @@ export interface AttemptOperation extends Operation<
 }
 export interface ActionOperation extends Operation<
   "action",
-  ActionResult | { outcome: "abandoned" }
+  (ActionResult | { outcome: "abandoned" }) & { usage?: ScopeTerminal["usage"]; endTimeMs?: number }
 > {
   approval(input: ApprovalOptions, key: string): Promise<ApprovalOperation>;
   toolExecution(input: { executionId: string }): Promise<ToolOperation>;
@@ -95,12 +101,14 @@ export function operationHandle(runtime: RuntimeScope): RestoredOperation {
     snapshot: () => runtime.snapshot(),
     run: <T>(execute: () => T, ceiling?: CaptureDecision) => runtime.run(execute, ceiling),
     complete: async (result: Completion) => {
-      await runtime.finish({
-        ...result,
-        model: "result" in result ? result.result : undefined,
-        failed: result.outcome === "failed",
-        errorCode: "errorType" in result ? result.errorType : undefined,
-      });
+      try {
+        await runtime.finish({
+          ...result,
+          model: "result" in result ? result.result : undefined,
+          failed: result.outcome === "failed",
+          errorCode: "errorType" in result ? result.errorType : undefined,
+        });
+      } catch {}
     },
   };
   switch (runtime.type) {
