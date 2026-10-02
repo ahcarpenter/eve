@@ -43,6 +43,7 @@ import { boundedSerializer } from "#tracing/lib/core/serializer.js";
 import { withoutDeclinedContent } from "#tracing/lib/core/content-policy.js";
 import { runTraceContext } from "#tracing/lib/core/context.js";
 import { reservation } from "#tracing/lib/core/reservation.js";
+import { disabledOperation } from "#tracing/lib/core/disabled-operation.js";
 
 export type {
   StepOptions,
@@ -86,6 +87,27 @@ export function createTraceLifecycle(input: {
   const scopeLimit = 10_000;
 
   async function construct(
+    identity: ScopeIdentity,
+    capture: CaptureDecision,
+    data: ScopeData,
+    parent: RuntimeScope | undefined,
+    attempt: ScopeRecord["attempt"],
+    binding: RuntimeBinding,
+  ): Promise<RuntimeScope> {
+    try {
+      return await constructOperation(identity, capture, data, parent, attempt, binding);
+    } catch {
+      try {
+        input.diagnostic?.("agent.tracing.operation.failed");
+      } catch {}
+      return disabledOperation(data, backend, serializer, {
+        ...binding,
+        parent: parent?.reference ?? binding.parent,
+      });
+    }
+  }
+
+  async function constructOperation(
     identity: ScopeIdentity,
     capture: CaptureDecision,
     data: ScopeData,

@@ -56,8 +56,8 @@ const turn = await tracing.turn({
   framework: { name: "my-agent-runtime", version: "1.0" },
 });
 
-const attempt = await turn?.attempt({ stepIndex: 0, attempt: 0 });
-const model = await attempt?.modelCall({
+const attempt = await turn.attempt({ stepIndex: 0, attempt: 0 });
+const model = await attempt.modelCall({
   provider: "example-provider",
   modelId: "example-model",
 });
@@ -75,8 +75,9 @@ The step index identifies the logical step. The attempt number identifies its
 retry. Each constructor call creates a separate physical operation.
 Keep each handle until its operation ends.
 
-`turn()` returns `undefined` if trace setup for that operation fails.
-Optional handles let the application continue execution.
+Operation creation always returns a typed handle. If span setup fails, the
+handle disables emission. Its child methods remain available, and around
+callbacks still execute exactly once.
 
 ## Run and complete operations
 
@@ -85,7 +86,7 @@ activates context and completes each span in `finally`:
 
 ```ts
 const result = await tracing.turn({ identity, sequence: 0 }, (turn) =>
-  turn!.attempt({ stepIndex: 0, attempt: 0 }, (attempt) =>
+  turn.attempt({ stepIndex: 0, attempt: 0 }, (attempt) =>
     attempt.action({ callId: "lookup-1", name: "lookup" }, (action) =>
       action.toolExecution({}, () => lookup()),
     ),
@@ -129,42 +130,26 @@ Complete streaming work inside the execution function before it returns.
 For work completed by another worker, create a handle with one argument and
 complete that handle when the terminal event arrives.
 
-Call `run()` to make an operation's context active. HTTP and database spans
-created during execution can use that operation as their parent.
+The around form completes the model automatically:
 
 ```ts
-try {
-  const result = model === undefined ? await callModel() : await model.run(() => callModel());
-
-  await model?.complete({
-    outcome: "completed",
-    result: {
-      finishReason: "stop",
-      usage: { inputTokens: 12, outputTokens: 8 },
-    },
-  });
-  await attempt?.complete({ outcome: "completed" });
-  await turn?.complete({ outcome: "completed" });
-  return result;
-} catch (error) {
-  const failure = {
-    outcome: "failed" as const,
-    errorType: error instanceof Error ? error.name : "_OTHER",
-    error,
-  };
-  await model?.complete(failure);
-  await attempt?.complete(failure);
-  await turn?.complete(failure);
-  throw error;
-}
+const result = await attempt.modelCall(
+  {
+    provider: "example-provider",
+    modelId: "example-model",
+    describe: (value) => ({
+      outcome: "completed" as const,
+      result: { finishReason: value.finishReason, usage: value.usage },
+    }),
+  },
+  () => callModel(),
+);
 ```
 
-Here, `callModel()` is your application's model call. Supply its actual finish
-reason and usage. Model usage is added to the parent operations.
-Complete children before their parents. For streaming calls, complete the model
-after the stream ends.
+Here, `callModel()` supplies the actual finish reason and usage. Model usage is
+added to parent operations. Consume streams inside the execution function.
+The library records thrown errors and completes the model in `finally`.
 
-Use `{ outcome: "cancelled" }` for a cancelled turn or attempt.
 An attempt also accepts gateway costs through `cost()`.
 
 ## Record actions, approvals, and tools
@@ -172,42 +157,23 @@ An attempt also accepts gateway costs through `cost()`.
 An attempt creates actions. Each action creates its approval and tool operations:
 
 ```ts
-const action = await attempt?.action({
-  callId: "lookup-1",
-  name: "lookup",
-  arguments: { customerId: "customer-123" },
+const result = await attempt.action({ callId: "lookup-1", name: "lookup" }, async (action) => {
+  const accepted = await action.approval(
+    {
+      requestId: "approval-1",
+      describe: (value) => ({ outcome: value ? "approved" : "denied" }),
+    },
+    () => requestApproval(),
+  );
+
+  if (!accepted) return "Approval declined";
+  return action.toolExecution({}, () => lookup());
 });
-const approval = await action?.approval({ requestId: "approval-1" });
-await approval?.complete({ outcome: "approved" });
-
-const tool = await action?.toolExecution();
-try {
-  const result = tool === undefined ? await lookup() : await tool.run(() => lookup());
-
-  await tool?.complete({ outcome: "completed", output: result });
-  await action?.complete({ outcome: "completed", output: result });
-} catch (error) {
-  const failure = {
-    outcome: "failed" as const,
-    errorType: error instanceof Error ? error.name : "_OTHER",
-    error,
-  };
-  await tool?.complete(failure);
-  await action?.complete(failure);
-  throw error;
-}
 ```
 
-Here, `lookup()` is your tool implementation. The action supplies the tool name,
-call ID, and arguments. An error-valued result must use the failed outcome even
-when the tool promise resolves.
-
-For a denied approval, complete the approval and reject the action:
-
-```ts
-await approval?.complete({ outcome: "denied", response: "Approval declined" });
-await action?.complete({ outcome: "rejected" });
-```
+Each around call completes its span automatically. Supply a `describe` function
+on the action or tool metadata when a resolved value represents failure,
+rejection, or cancellation.
 
 The parent structure is:
 
@@ -226,7 +192,7 @@ Wrap a memory operation with an around pointcut. Supply metadata first and
 execution second:
 
 ```ts
-const result = await turn!.run(() =>
+const result = await turn.run(() =>
   tracing.memory.search(
     {
       identity: { ...identity, framework: { name: "custom", version: "1" } },
@@ -244,20 +210,21 @@ original result, records thrown errors, and completes its span automatically.
 The active operation supplies the parent context. Add `describe` to metadata
 when the result contains a record count or records to capture.
 
-Turns, attempts, and actions can create memory operations:
+Turns, attempts, and actions can create memory operations. Use the around form
+with a result description to capture the record count:
 
 ```ts
-const memory = await attempt?.memory({
-  operation: "search_memory",
-  phase: "retrieve",
-  slot: "history",
-  storeId: "customer-history",
-});
-await memory?.complete({ outcome: "completed", recordCount: 3 });
+const records = await attempt.memory(
+  {
+    operation: "search_memory",
+    phase: "retrieve",
+    slot: "history",
+    storeId: "customer-history",
+    describe: (values) => ({ outcome: "completed", recordCount: values.length }),
+  },
+  () => store.search(query),
+);
 ```
-
-Use `upsert_memory` to record a write. Supply the actual record count and any
-permitted records when the operation ends.
 
 ## Select content capture
 

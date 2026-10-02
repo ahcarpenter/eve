@@ -90,17 +90,17 @@ export function createAgentTracing(input: {
       key: randomUUID(),
     });
   };
-  function turn(data: TurnInput): Promise<TurnOperation | undefined>;
+  function turn(data: TurnInput): Promise<TurnOperation>;
   function turn<T>(
     data: TurnInput & { describe?: (value: T) => Parameters<TurnOperation["complete"]>[0] },
-    execute: (turn: TurnOperation | undefined) => T | PromiseLike<T>,
+    execute: (turn: TurnOperation) => T | PromiseLike<T>,
   ): Promise<T>;
   function turn<T>(
     data: TurnInput & { describe?: (value: T) => Parameters<TurnOperation["complete"]>[0] },
-    execute?: (turn: TurnOperation | undefined) => T | PromiseLike<T>,
-  ): Promise<T> | Promise<TurnOperation | undefined> {
+    execute?: (turn: TurnOperation) => T | PromiseLike<T>,
+  ): Promise<T> | Promise<TurnOperation> {
     if (execute === undefined) return begin(data);
-    let handle: TurnOperation | undefined;
+    let handle: TurnOperation;
     return aroundOperation({
       start: async () => {
         handle = await begin(data);

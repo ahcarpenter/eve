@@ -62,15 +62,10 @@ export function createTraceRecorder(input: {
   async function start<K extends ScopeRecord["data"]["type"]>(
     input: RuntimeOperationInput,
     data: Extract<ScopeRecord["data"], { type: K }>,
-  ): Promise<Extract<RestoredOperation, { type: K }> | undefined> {
-    try {
-      return operationHandle(
-        await runtime.start(input.identity, data, input.capture, input.binding, input.attempt),
-      ) as Extract<RestoredOperation, { type: K }>;
-    } catch {
-      report();
-      return undefined;
-    }
+  ): Promise<Extract<RestoredOperation, { type: K }>> {
+    return operationHandle(
+      await runtime.start(input.identity, data, input.capture, input.binding, input.attempt),
+    ) as Extract<RestoredOperation, { type: K }>;
   }
   async function memory<T>(
     operation: MemoryOptions["operation"],
@@ -172,14 +167,9 @@ export function createTraceRecorder(input: {
       capture: import("#tracing/lib/core/types.js").CaptureDecision;
       key: string;
     }) {
-      try {
-        return operationHandle(
-          await runtime.begin(input.identity, input.metadata, input.capture, input.key),
-        ) as import("#tracing/lib/core/operations.js").TurnOperation;
-      } catch {
-        report();
-        return undefined;
-      }
+      return operationHandle(
+        await runtime.begin(input.identity, input.metadata, input.capture, input.key),
+      ) as import("#tracing/lib/core/operations.js").TurnOperation;
     },
     active: runtime.active,
     run: runtime.run,

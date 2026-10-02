@@ -211,7 +211,7 @@ describe("HarnessAgent consumer instrumentation", () => {
       const value = await tracing.turn(
         { identity: { conversationId: "around", runId: "around", turnId: "turn" }, sequence: 0 },
         (turn) =>
-          turn!.attempt({ stepIndex: 0, attempt: 0 }, async (attempt) => {
+          turn.attempt({ stepIndex: 0, attempt: 0 }, async (attempt) => {
             await attempt.modelCall(
               {
                 provider: "provider",
@@ -267,7 +267,7 @@ describe("HarnessAgent consumer instrumentation", () => {
             sequence: 0,
           },
           (turn) =>
-            turn!.attempt({ stepIndex: 0, attempt: 0 }, async () => {
+            turn.attempt({ stepIndex: 0, attempt: 0 }, async () => {
               throw failure;
             }),
         ),
@@ -425,7 +425,7 @@ describe("HarnessAgent consumer instrumentation", () => {
         identity: { conversationId: "vercel-conversation", runId: "vercel-run", turnId: "turn" },
         sequence: 0,
       });
-      await turn!.complete({ outcome: "completed" });
+      await turn.complete({ outcome: "completed" });
       expect(reportSpans).toHaveBeenCalledOnce();
       expect(JSON.stringify(reportSpans.mock.calls[0])).toContain("invoke_agent vercel-harness");
       expect(() => createAgentTracing({ agentName: "different-service" })).toThrow(

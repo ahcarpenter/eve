@@ -41,6 +41,69 @@ function setup() {
 }
 
 describe("trace recorder", () => {
+  it.each(["root", "child"])(
+    "keeps typed access and executes once after %s span setup fails",
+    async (failureAt) => {
+      const idGenerator = new AgentSpanIdGenerator();
+      const exporter = new InMemorySpanExporter();
+      const provider = new BasicTracerProvider({
+        idGenerator,
+        spanProcessors: [new SimpleSpanProcessor(exporter)],
+      });
+      const backend = durableOtelBackend({
+        tracer: provider.getTracer("failure"),
+        idGenerator,
+        samplesTrace: () => true,
+      });
+      const start = backend.start;
+      let calls = 0;
+      backend.start = (...args) => {
+        if (++calls === (failureAt === "root" ? 1 : 2)) throw new Error("span setup");
+        return start(...args);
+      };
+      const recorder = createTraceRecorder({
+        output: backend,
+        serializer: aiSdkContentSerializer,
+        mode: "live",
+      });
+      try {
+        const turn = await recorder.beginTurn({
+          identity,
+          metadata: { sequence: 0 },
+          capture,
+          key: "failure",
+        });
+        let executions = 0;
+        const result = await turn.attempt({ stepIndex: 0, attempt: 0 }, (attempt) =>
+          attempt.action({ callId: "call", name: "lookup" }, (action) =>
+            action.toolExecution({}, async (tool) => {
+              expect(tool.capture).toEqual({
+                emit: false,
+                recordInputs: false,
+                recordOutputs: false,
+              });
+              executions++;
+              return "original";
+            }),
+          ),
+        );
+        expect(result).toBe("original");
+        expect(executions).toBe(1);
+        const error = new TypeError("original failure");
+        await expect(
+          turn.attempt({ stepIndex: 1, attempt: 0 }, async () => {
+            throw error;
+          }),
+        ).rejects.toBe(error);
+        await turn.complete({ outcome: "completed" });
+        expect(
+          exporter.getFinishedSpans().some((span) => span.name === "execute_tool lookup"),
+        ).toBe(false);
+      } finally {
+        await provider.shutdown();
+      }
+    },
+  );
   it("rejects corrupt checkpoint records without starting spans", async () => {
     const runtime = setup();
     try {
