@@ -40,6 +40,20 @@ needs, or the client declines it below)
 | approving by text clears the approval's buttons | ✅ | — | ✅ | — | — | — | — | — | — | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
 | pressing Approve names who approved on the approval | ❌ | — | ❌ | ❌ | ❌ | — | — | — | — | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | — | — |
 | approving by text names who approved on the approval | ❌ | — | ❌ | — | — | — | — | — | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | — |
+| an exhausted session budget asks to Approve or Stop | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| pressing Approve on a budget prompt finishes the held turn | ✅ | — | ✅ | ❌ | ❌ | — | — | — | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| a text reply of approve on a budget prompt finishes the held turn | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| pressing Stop on a budget prompt ends the held turn and asks again next time | ✅ | — | ✅ | — | — | — | — | — | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | — |
+| a text reply of stop on a budget prompt ends the held turn and asks again next time | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
+| a reply that answers neither budget option keeps the prompt open | ❌ | ❌ | ❌ | — | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| a sign-in names the service and shows its sign-in link | ❌ | ✅ | ✅ | ❌ | ❌ | — | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| a sign-in shows its confirmation code | ❌ | ✅ | ✅ | ❌ | ❌ | — | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ |
+| a sign-in keeps its link and code out of messages everyone can see | ✅ | — | — | ✅ | — | ✅ | ❌ | ✅ | — | ✅ | — | ❌ | — | ✅ | — | — | — |
+| a sign-in without a link shows its instructions | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ |
+| completing a sign-in runs the tool that asked for it | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| completing a sign-in tells the person it succeeded | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| a new message during a sign-in cancels it and gets an answer | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| a cancelled sign-in tells the person it was cancelled | ✅ | ✅ | ✅ | — | — | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 
 ## Broken
 
@@ -47,14 +61,43 @@ needs, or the client declines it below)
 - **chat-sdk**, answering a question by text names who answered on the question: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **chat-sdk**, pressing Approve names who approved on the approval: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **chat-sdk**, approving by text names who approved on the approval: a resolved prompt doesn't say who answered; input.resolved carries no responder
+- **chat-sdk**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
+- **chat-sdk**, a sign-in names the service and shows its sign-in link: outside a DM the bot says to continue in a direct message but never sends one
+- **chat-sdk**, a sign-in shows its confirmation code: outside a DM the bot says to continue in a direct message but never sends one
+- **chat-sdk**, a sign-in without a link shows its instructions: outside a DM the bot says to continue in a direct message but never sends one
+- **chat-sdk-text**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
 - **chat-sdk-dm**, pressing an option names who answered on the question: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **chat-sdk-dm**, answering a question by text names who answered on the question: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **chat-sdk-dm**, pressing Approve names who approved on the approval: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **chat-sdk-dm**, approving by text names who approved on the approval: a resolved prompt doesn't say who answered; input.resolved carries no responder
+- **chat-sdk-dm**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
 - **discord**, pressing an option names who answered on the question: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **discord**, pressing Approve names who approved on the approval: a resolved prompt doesn't say who answered; input.resolved carries no responder
+- **discord**, an exhausted session budget asks to Approve or Stop: a budget prompt's request id overflows Discord's 100-character custom_id, so posting it throws
+- **discord**, pressing Approve on a budget prompt finishes the held turn: a budget prompt's request id overflows Discord's 100-character custom_id, so posting it throws
+- **discord**, a sign-in names the service and shows its sign-in link: the channel has no default sign-in renderer
+- **discord**, a sign-in shows its confirmation code: the channel has no default sign-in renderer
+- **discord**, a sign-in without a link shows its instructions: the channel has no default sign-in renderer
+- **discord**, completing a sign-in tells the person it succeeded: the channel has no default sign-in renderer
 - **discord-dm**, pressing an option names who answered on the question: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **discord-dm**, pressing Approve names who approved on the approval: a resolved prompt doesn't say who answered; input.resolved carries no responder
+- **discord-dm**, an exhausted session budget asks to Approve or Stop: a budget prompt's request id overflows Discord's 100-character custom_id, so posting it throws
+- **discord-dm**, pressing Approve on a budget prompt finishes the held turn: a budget prompt's request id overflows Discord's 100-character custom_id, so posting it throws
+- **discord-dm**, a sign-in names the service and shows its sign-in link: the channel has no default sign-in renderer
+- **discord-dm**, a sign-in shows its confirmation code: the channel has no default sign-in renderer
+- **discord-dm**, a sign-in without a link shows its instructions: the channel has no default sign-in renderer
+- **discord-dm**, completing a sign-in tells the person it succeeded: the channel has no default sign-in renderer
+- **github**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
+- **github**, a sign-in without a link shows its instructions: the channel has no default sign-in renderer
+- **github**, completing a sign-in tells the person it succeeded: the channel has no default sign-in renderer
+- **github**, a cancelled sign-in tells the person it was cancelled: the channel has no default sign-in renderer
+- **linear**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
+- **linear**, a sign-in keeps its link and code out of messages everyone can see: the code is in the elicitation body the whole issue sees; who sees the auth signal's link is unverified
+- **linq**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
+- **linq**, a sign-in names the service and shows its sign-in link: outside a DM the bot says to continue in a direct message but never sends one
+- **linq**, a sign-in shows its confirmation code: outside a DM the bot says to continue in a direct message but never sends one
+- **linq**, a sign-in without a link shows its instructions: outside a DM the bot says to continue in a direct message but never sends one
+- **linq-dm**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
 - **slack**, a text reply matching an option answers the only pending question: a typed answer keeps the bot mention a channel reply needs, so it matches no option
 - **slack**, a text reply that matches no option answers the question with the person's words: a typed answer keeps the bot mention a channel reply needs, so it matches no option
 - **slack**, a text reply answers an open-ended question with the person's words: a typed answer keeps the bot mention a channel reply needs, so it matches no option
@@ -64,23 +107,48 @@ needs, or the client declines it below)
 - **slack**, answering a question by text names who answered on the question: a typed answer keeps the bot mention a channel reply needs, so it matches no option
 - **slack**, approving by text clears the approval's buttons: a typed answer keeps the bot mention a channel reply needs, so it matches no option
 - **slack**, approving by text names who approved on the approval: a typed answer keeps the bot mention a channel reply needs, so it matches no option
+- **slack**, a text reply of approve on a budget prompt finishes the held turn: a typed answer keeps the bot mention a channel reply needs, so it matches no option
+- **slack**, a text reply of stop on a budget prompt ends the held turn and asks again next time: a typed answer keeps the bot mention a channel reply needs, so it matches no option
+- **slack**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
+- **slack**, a sign-in without a link shows its instructions: Slack sends the private sign-in prompt only for a challenge with a URL
 - **slack-dm**, answering a question by text clears its buttons: only the button interaction handler edits a question; a typed answer leaves it
 - **slack-dm**, answering a question by text names who answered on the question: only the button interaction handler edits a question; a typed answer leaves it
 - **slack-dm**, approving by text names who approved on the approval: the card loses its buttons after a typed approval but doesn't say who approved
+- **slack-dm**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
+- **slack-dm**, a sign-in without a link shows its instructions: Slack sends the private sign-in prompt only for a challenge with a URL
 - **teams**, pressing an option names who answered on the question: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **teams**, answering a question by text names who answered on the question: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **teams**, approving by text names who approved on the approval: a resolved prompt doesn't say who answered; input.resolved carries no responder
+- **teams**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
+- **teams**, a sign-in shows its confirmation code: the Teams sign-in card omits the challenge's user code
+- **teams**, a sign-in keeps its link and code out of messages everyone can see: the sign-in prompt, link included, is posted to the whole thread
+- **teams**, a sign-in without a link shows its instructions: the Teams sign-in card omits the challenge's instructions
 - **teams-dm**, pressing an option names who answered on the question: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **teams-dm**, answering a question by text names who answered on the question: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **teams-dm**, approving by text names who approved on the approval: a resolved prompt doesn't say who answered; input.resolved carries no responder
+- **teams-dm**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
+- **teams-dm**, a sign-in shows its confirmation code: the Teams sign-in card omits the challenge's user code
+- **teams-dm**, a sign-in without a link shows its instructions: the Teams sign-in card omits the challenge's instructions
 - **telegram**, pressing an option names who answered on the question: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **telegram**, answering a question by text names who answered on the question: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **telegram**, pressing Approve names who approved on the approval: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **telegram**, approving by text names who approved on the approval: a resolved prompt doesn't say who answered; input.resolved carries no responder
+- **telegram**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
 - **telegram-dm**, pressing an option names who answered on the question: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **telegram-dm**, answering a question by text names who answered on the question: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **telegram-dm**, pressing Approve names who approved on the approval: a resolved prompt doesn't say who answered; input.resolved carries no responder
 - **telegram-dm**, approving by text names who approved on the approval: a resolved prompt doesn't say who answered; input.resolved carries no responder
+- **telegram-dm**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
+- **tui**, pressing Stop on a budget prompt ends the held turn and asks again next time: a re-raised budget prompt keeps its request id, and eve/client ignores ids it has seen
+- **tui**, a text reply of stop on a budget prompt ends the held turn and asks again next time: a re-raised budget prompt keeps its request id, and eve/client ignores ids it has seen
+- **tui**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
+- **tui**, a sign-in names the service and shows its sign-in link: the TUI labels a sign-in with the tool name, not the challenge's displayName
+- **twilio**, a reply that answers neither budget option keeps the prompt open: eve coalesces the queued reply with the later approve, which then matches no option
+- **twilio**, a sign-in names the service and shows its sign-in link: the channel has no default sign-in renderer
+- **twilio**, a sign-in shows its confirmation code: the channel has no default sign-in renderer
+- **twilio**, a sign-in without a link shows its instructions: the channel has no default sign-in renderer
+- **twilio**, completing a sign-in tells the person it succeeded: the channel has no default sign-in renderer
+- **twilio**, a cancelled sign-in tells the person it was cancelled: the channel has no default sign-in renderer
 
 ## Declined
 
