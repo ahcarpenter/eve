@@ -8,7 +8,7 @@ import type {
   TraceReference,
   ExecutionContext,
 } from "#tracing/core/types.js";
-import { withoutDeclinedContent } from "#tracing/content-attributes.js";
+import { withoutDeclinedContent } from "#tracing/core/content-policy.js";
 
 export interface TraceOperation extends SpanWriter {
   readonly capture: CaptureDecision;
@@ -67,7 +67,7 @@ export function createTraceEngine(input: {
               name,
               attributes === undefined
                 ? undefined
-                : (withoutDeclinedContent(attributes, capture) as Attributes),
+                : ((withoutDeclinedContent(attributes, capture) ?? attributes) as Attributes),
               timeMs,
             ),
           );

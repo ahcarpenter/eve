@@ -5,14 +5,15 @@ import {
   context,
   trace,
   createTraceState,
+  createContextKey,
   type SpanContext,
   type Context,
   type Tracer,
 } from "#compiled/@opentelemetry/api/index.js";
-import { recordAgentSpanError } from "#tracing/agent-span-error.js";
+import { recordAgentSpanError } from "#tracing/adapters/otel-error.js";
 import { withErrorContent } from "#tracing/error-content-context.js";
 import { suppressTracing } from "#tracing/suppress-tracing.js";
-import type { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+import type { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import type {
   Attributes,
   DurableTraceBackend,
@@ -22,8 +23,20 @@ import type {
   TraceBackend,
   TraceReference,
   ExecutionContext,
+  ActiveOperation,
 } from "#tracing/core/types.js";
 import { linkAttributes } from "#tracing/core/links.js";
+import { activeOperation, intersectCapture } from "#tracing/core/activation.js";
+
+const ACTIVE_OPERATION = createContextKey("agent.tracing.active-operation");
+
+export function activeTraceOperation(
+  host: Context = context.active(),
+): ActiveOperation | undefined {
+  return typeof host.getValue === "function"
+    ? (host.getValue(ACTIVE_OPERATION) as ActiveOperation | undefined)
+    : undefined;
+}
 
 function parentContext(reference: TraceReference | undefined, host?: ExecutionContext): Context {
   const base = (host as Context | undefined) ?? ROOT_CONTEXT;
@@ -101,11 +114,21 @@ export function liveOtelBackend(tracer: Tracer, mapping?: OutputMapping): TraceB
       const active = trace.getSpan(context.active())?.spanContext();
       return active === undefined ? undefined : portableReference(active);
     },
-    run(reference, capture, execute, executionContext) {
+    active: () => activeTraceOperation(),
+    run(reference, capture, execute, executionContext, operation) {
+      capture = intersectCapture(capture, activeTraceOperation()?.capture);
       // Retain baggage and host context while replacing the semantic parent span.
       let active = trace.setSpan(
         (executionContext as Context | undefined) ?? context.active(),
         trace.wrapSpanContext(otelReference(reference)),
+      );
+      capture = intersectCapture(
+        capture,
+        (active.getValue(ACTIVE_OPERATION) as ActiveOperation | undefined)?.capture,
+      );
+      active = active.setValue(
+        ACTIVE_OPERATION,
+        activeOperation(operation ?? { type: "activation", reference, capture }, capture),
       );
       active = withErrorContent(active, capture.recordOutputs);
       if (!capture.emit || (reference.traceFlags & 1) === 0) active = suppressTracing(active);
@@ -126,6 +149,15 @@ export function durableOtelBackend(input: {
   const live = liveOtelBackend(input.tracer, input.mapping);
   return {
     ...live,
+    reserveReference({ key, parent, traceFlags }) {
+      return {
+        ...parent,
+        traceId: parent?.traceId ?? input.idGenerator.deriveTraceId(key),
+        spanId: input.idGenerator.deriveSpanId(key),
+        traceFlags,
+        isRemote: false,
+      };
+    },
     admits(span, reference) {
       return input.samplesTrace(reference.traceId, {
         name: span.name,

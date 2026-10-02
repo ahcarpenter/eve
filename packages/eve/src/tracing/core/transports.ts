@@ -16,6 +16,8 @@ import type {
 } from "#tracing/core/types.js";
 import { mcpLifecycle } from "#tracing/core/mcp.js";
 import type { ContentSerializer } from "#tracing/core/model.js";
+import type { ActiveOperation } from "#tracing/core/types.js";
+import { intersectCapture } from "#tracing/core/activation.js";
 
 export function createTransportLifecycle(backend: TraceBackend, serializer: ContentSerializer) {
   const engine = createTraceEngine({ backend });
@@ -42,7 +44,15 @@ export function createTransportLifecycle(backend: TraceBackend, serializer: Cont
       );
       return {
         reference: operation.reference,
-        run: operation.run,
+        run<T>(execute: () => T) {
+          return backend.run(
+            operation.reference,
+            operation.capture,
+            execute,
+            input.executionContext,
+            { type: "channelRequest", reference: operation.reference, capture: operation.capture },
+          );
+        },
         channel(input: { channelName?: string; channelKind?: string }) {
           applyAttributes(operation, channelRequestMetadata(input));
         },
@@ -66,6 +76,7 @@ export function createTransportLifecycle(backend: TraceBackend, serializer: Cont
       executionContext?: ExecutionContext;
       capture: CaptureDecision;
     }) {
+      input = { ...input, capture: intersectCapture(input.capture, backend.active?.()?.capture) };
       const operation = engine.start(
         {
           type: "mcp",
@@ -84,9 +95,23 @@ export function createTransportLifecycle(backend: TraceBackend, serializer: Cont
         write: (attributes) => applyAttributes(operation, attributes),
         error: operation.fail,
       });
+      const active: ActiveOperation = {
+        type: "mcp",
+        reference: operation.reference,
+        capture: input.capture,
+        mcp: semantic,
+      };
       return {
         reference: operation.reference,
-        run: operation.run,
+        run<T>(execute: () => T) {
+          return backend.run(
+            operation.reference,
+            input.capture,
+            execute,
+            input.executionContext,
+            active,
+          );
+        },
         ...semantic,
         completed(result?: unknown) {
           if (result !== undefined) semantic.result(result);

@@ -12,10 +12,154 @@ import {
 } from "#tracing/core/scopes.js";
 import { durableOtelBackend, liveOtelBackend } from "#tracing/adapters/otel.js";
 import { aiSdkContentSerializer } from "#tracing/adapters/serializer.js";
-import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+import { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import { eveOutputMapping } from "#tracing/core/profiles/eve.js";
+import { context } from "@opentelemetry/api";
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
+import { createMcpTracing } from "#tracing/adapters/mcp.js";
 
 describe("constructed agent trace scopes", () => {
+  it("retains pending tool enrichment and terminal state until its action parent attaches", async () => {
+    const idGenerator = new AgentSpanIdGenerator();
+    const exporter = new InMemorySpanExporter();
+    const provider = new BasicTracerProvider({
+      idGenerator,
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    try {
+      const tracing = createAgentTracing({
+        adapter: {
+          backend: durableOtelBackend({
+            tracer: provider.getTracer("pending"),
+            idGenerator,
+            samplesTrace: () => true,
+          }),
+          serializer: aiSdkContentSerializer,
+        },
+      });
+      const parent = { traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1 };
+      const action = { ...parent, spanId: "3".repeat(16) };
+      const operation = tracing.lifecycle.pendingTool({
+        key: "tool",
+        identity: {
+          conversationId: "conversation",
+          runId: "run",
+          turnId: "turn",
+          framework: { name: "custom", version: "1" },
+        },
+        data: { type: "tool", options: { callId: "call", name: "lookup" } },
+        parent,
+        reference: tracing.lifecycle.reserve({ key: "tool", parent, traceFlags: 1 }),
+        startTimeMs: Date.now(),
+        capture: { emit: true, recordInputs: false, recordOutputs: false },
+      });
+      operation.mcp.update({ connectionName: "catalog", method: "tools/call", requestId: "7" });
+      await operation.finish({ output: "secret" });
+      expect(exporter.getFinishedSpans()).toHaveLength(0);
+      await operation.attach(action);
+      const [span] = exporter.getFinishedSpans();
+      expect(span?.parentSpanContext?.spanId).toBe(action.spanId);
+      expect(span?.attributes["jsonrpc.request.id"]).toBe("7");
+      expect(span?.spanContext().spanId).toBe(operation.reference.spanId);
+      expect(JSON.stringify(span?.attributes)).not.toContain("secret");
+    } finally {
+      await provider.shutdown();
+    }
+  });
+  it("activates callback tools across awaits and narrows nested MCP capture without duplicate spans", async () => {
+    const manager = new AsyncLocalStorageContextManager().enable();
+    context.setGlobalContextManager(manager);
+    const exporter = new InMemorySpanExporter();
+    const provider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    try {
+      const tracing = createAgentTracing({
+        adapter: {
+          backend: liveOtelBackend(provider.getTracer("active")),
+          serializer: aiSdkContentSerializer,
+          mcp: createMcpTracing,
+        },
+        content: { recordInputs: true, recordOutputs: true },
+      });
+      await tracing.turn(
+        { conversationId: "conversation", runId: "run", turnId: "turn", sequence: 0 },
+        (turn) =>
+          turn.step({ index: 0 }, (step) =>
+            step.action({ callId: "call", name: "lookup" }, (action) =>
+              action.tool(async () => {
+                await Promise.resolve();
+                expect(tracing.lifecycle.active()?.type).toBe("tool");
+                await tracing.lifecycle.run(
+                  tracing.lifecycle.active()!.reference,
+                  { emit: true, recordInputs: false, recordOutputs: false },
+                  async () => {
+                    await Promise.resolve();
+                    tracing.lifecycle.active()?.mcp?.arguments("secret");
+                    await tracing.lifecycle.run(
+                      tracing.lifecycle.active()!.reference,
+                      { emit: true, recordInputs: true, recordOutputs: true },
+                      async () => {
+                        await Promise.resolve();
+                        expect(tracing.lifecycle.active()?.capture.recordOutputs).toBe(false);
+                        tracing.lifecycle.active()?.mcp?.result("secret");
+                      },
+                    );
+                    await tracing.mcpAdapter!.call({
+                      connectionName: "catalog",
+                      toolName: "lookup",
+                      arguments: "secret",
+                      execute: async () => "secret",
+                    });
+                  },
+                );
+                return "result";
+              }),
+            ),
+          ),
+      );
+      expect(tracing.lifecycle.active()).toBeUndefined();
+      const spans = exporter.getFinishedSpans();
+      expect(spans.filter((span) => span.name === "execute_tool lookup")).toHaveLength(1);
+      expect(spans.filter((span) => span.name.startsWith("tools/call"))).toHaveLength(0);
+      expect(JSON.stringify(spans.map((span) => span.attributes))).not.toContain("secret");
+    } finally {
+      context.disable();
+      manager.disable();
+      await provider.shutdown();
+    }
+  });
+
+  it("preserves callback results and application errors when checkpoint IO fails", async () => {
+    const idGenerator = new AgentSpanIdGenerator();
+    const provider = new BasicTracerProvider({ idGenerator });
+    try {
+      const unavailable = async () => {
+        throw new Error("checkpoint unavailable");
+      };
+      const tracing = createAgentTracing({
+        adapter: {
+          backend: durableOtelBackend({
+            tracer: provider.getTracer("checkpoint"),
+            idGenerator,
+            samplesTrace: () => true,
+          }),
+          serializer: aiSdkContentSerializer,
+        },
+        checkpointer: { load: unavailable, save: unavailable, remove: unavailable },
+      });
+      const input = { conversationId: "conversation", runId: "run", turnId: "turn", sequence: 0 };
+      expect(await tracing.turn(input, async () => "result")).toBe("result");
+      const error = new TypeError("application");
+      await expect(
+        tracing.turn({ ...input, turnId: "failed" }, async () => {
+          throw error;
+        }),
+      ).rejects.toBe(error);
+    } finally {
+      await provider.shutdown();
+    }
+  });
   it("omits checkpoint content when the root sampler declines emission", async () => {
     const provider = new BasicTracerProvider({ idGenerator: new AgentSpanIdGenerator() });
     const records = new Map<string, ScopeRecord>();

@@ -24,31 +24,25 @@ import type {
   Attributes,
   CaptureDecision,
   DurableTraceBackend,
-  FrameworkIdentity,
   PreparedSpan,
-  RunIdentity,
   TraceBackend,
   TraceLink,
   TraceReference,
-  Usage,
 } from "#tracing/core/types.js";
 import { gatewayCostAttributes } from "#tracing/core/gateway.js";
-import type { ScopeCost } from "#tracing/core/scope-lifecycle.js";
 import {
   completeScope,
   capturedScopeData as capturedData,
 } from "#tracing/core/scope-completion.js";
 import { topologyScope } from "#tracing/core/topology.js";
-import { mcpLifecycle, type McpLifecycle } from "#tracing/core/mcp.js";
+import { mcpLifecycle } from "#tracing/core/mcp.js";
+import { intersectCapture } from "#tracing/core/activation.js";
+import { pendingTool } from "#tracing/core/pending-tool.js";
+import { accumulateUsage } from "#tracing/core/usage.js";
 export { scopeRuntime } from "#tracing/core/topology.js";
 
-export interface ScopeIdentity extends RunIdentity {
-  readonly agentName?: string;
-  readonly framework: FrameworkIdentity;
-}
-
-export type { TurnMetadata } from "#tracing/core/scope-lifecycle.js";
-import type { TurnMetadata } from "#tracing/core/scope-lifecycle.js";
+export type { ScopeIdentity, TurnMetadata } from "#tracing/core/scope-lifecycle.js";
+import type { ScopeIdentity, TurnMetadata } from "#tracing/core/scope-lifecycle.js";
 
 export type {
   StepOptions,
@@ -91,74 +85,17 @@ export interface ActionScope {
   memory<T>(options: MemoryOptions, execute: () => Promise<MemoryResult<T>>): Promise<T>;
 }
 
-export type ScopeData =
-  | { readonly type: "activation"; readonly options: TurnMetadata }
-  | { readonly type: "step"; readonly options: StepOptions }
-  | { readonly type: "model"; readonly options: ModelOptions }
-  | { readonly type: "action"; readonly options: ActionOptions }
-  | {
-      readonly type: "tool";
-      readonly options: {
-        readonly callId: string;
-        readonly name: string;
-        readonly arguments?: unknown;
-      };
-    }
-  | {
-      readonly type: "approval";
-      readonly options: ApprovalOptions & { readonly callId: string; readonly actionName: string };
-    }
-  | { readonly type: "memory"; readonly options: MemoryOptions };
+export type { ScopeData } from "#tracing/core/scope-lifecycle.js";
+import type { ScopeData } from "#tracing/core/scope-lifecycle.js";
 
-/** Runtime-owned state. Authoring scopes never expose a checkpoint or raw span. */
-export interface ScopeRecord {
-  readonly key: string;
-  readonly identity: ScopeIdentity;
-  readonly data: ScopeData;
-  readonly reference: TraceReference;
-  readonly parent?: TraceReference;
-  readonly attempt?: { readonly index: number; readonly attempt: number };
-  readonly capture: CaptureDecision;
-  readonly startTimeMs: number;
-  readonly links?: readonly TraceLink[];
-  readonly usage?: { readonly inputTokens?: number; readonly outputTokens?: number };
-  readonly childIndex?: number;
-  readonly stepIndex?: number;
-  readonly outputContext?: Readonly<Record<string, string>>;
-  readonly content?: { readonly recordInputs: boolean; readonly recordOutputs: boolean };
-}
-
-export type { TraceCheckpointer } from "#tracing/core/scope-lifecycle.js";
-import type { TraceCheckpointer } from "#tracing/core/scope-lifecycle.js";
+export type { ScopeRecord, TraceCheckpointer } from "#tracing/core/scope-lifecycle.js";
+import type { ScopeRecord, TraceCheckpointer } from "#tracing/core/scope-lifecycle.js";
 
 export type { RuntimeBinding, ScopeTerminal } from "#tracing/core/scope-lifecycle.js";
-import type { RuntimeBinding, ScopeTerminal } from "#tracing/core/scope-lifecycle.js";
+import type { RuntimeBinding } from "#tracing/core/scope-lifecycle.js";
 
-export interface RuntimeScope {
-  readonly type: ScopeData["type"];
-  readonly reference: TraceReference;
-  readonly finished: boolean;
-  readonly capture: CaptureDecision;
-  readonly authoring: TurnScope | StepScope | ActionScope;
-  step(options: StepOptions, binding?: RuntimeBinding): Promise<RuntimeScope>;
-  model(options: ModelOptions, binding?: RuntimeBinding): Promise<RuntimeScope>;
-  action(options: ActionOptions, binding?: RuntimeBinding): Promise<RuntimeScope>;
-  tool(binding?: RuntimeBinding): Promise<RuntimeScope>;
-  approval(options: ApprovalOptions, binding?: RuntimeBinding): Promise<RuntimeScope>;
-  memory(options: MemoryOptions, binding?: RuntimeBinding): Promise<RuntimeScope>;
-  run<T>(execute: () => T): T;
-  finish(result?: ScopeTerminal): Promise<void>;
-  started(): Promise<void>;
-  completed(result?: ScopeTerminal): Promise<void>;
-  failed(error: unknown): Promise<void>;
-  abandon(): void;
-  usage(usage: Usage): Promise<void>;
-  nextStep(): number;
-  modelSelected(modelId: string, provider: string): void;
-  error(error?: unknown, errorType?: string): void;
-  cost(cost: ScopeCost): void;
-  readonly mcp: McpLifecycle;
-}
+export type { RuntimeScope } from "#tracing/core/scope-lifecycle.js";
+import type { RuntimeScope } from "#tracing/core/scope-lifecycle.js";
 
 export function createTraceLifecycle(input: {
   readonly backend: TraceBackend | DurableTraceBackend;
@@ -168,6 +105,7 @@ export function createTraceLifecycle(input: {
   readonly mapIdentity?: (identity: ScopeIdentity) => Attributes;
 }) {
   const engine = createTraceEngine(input);
+  const backend = input.backend;
   let counter = 0;
   const scopeLimit = 10_000;
 
@@ -193,6 +131,7 @@ export function createTraceLifecycle(input: {
     const startTimeMs = saved?.startTimeMs ?? binding?.startTimeMs ?? Date.now();
     const parentReference = saved?.parent ?? parent?.reference ?? binding?.parent;
     const actualIdentity = saved?.identity ?? identity;
+    capture = intersectCapture(capture, input.backend.active?.()?.capture);
     let actualCapture =
       saved === undefined
         ? capture
@@ -326,7 +265,9 @@ export function createTraceLifecycle(input: {
       get authoring() {
         return authoring;
       },
-      capture: actualCapture,
+      get capture() {
+        return actualCapture;
+      },
       mcp: mcpLifecycle({
         serializer: input.serializer,
         ...actualCapture,
@@ -387,9 +328,12 @@ export function createTraceLifecycle(input: {
         requireParent(["activation", "step", "action", "tool"]);
         return child({ type: "memory", options }, childBinding);
       },
-      run(execute) {
+      run(execute, ceiling) {
         if (finished) throw new Error("The trace scope has already finished.");
-        if (operation !== undefined) return operation.run(execute);
+        actualCapture = intersectCapture(
+          intersectCapture(actualCapture, ceiling),
+          backend.active?.()?.capture,
+        );
         let entered = false;
         try {
           return input.backend.run(
@@ -400,6 +344,7 @@ export function createTraceLifecycle(input: {
               return execute();
             },
             binding?.executionContext,
+            runtime,
           );
         } catch (error) {
           if (entered) throw error;
@@ -457,10 +402,19 @@ export function createTraceLifecycle(input: {
       },
       async usage(usage) {
         if (operation !== undefined) applyAttributes(operation, usageAttributes(usage));
-        if (usage.inputTokens !== undefined) totalInput = (totalInput ?? 0) + usage.inputTokens;
-        if (usage.outputTokens !== undefined) totalOutput = (totalOutput ?? 0) + usage.outputTokens;
+        const total = accumulateUsage(
+          { inputTokens: totalInput, outputTokens: totalOutput },
+          usage,
+        );
+        totalInput = total.inputTokens;
+        totalOutput = total.outputTokens;
         if (input.checkpointer !== undefined) {
-          record = { ...record!, usage: { inputTokens: totalInput, outputTokens: totalOutput } };
+          record = {
+            ...record!,
+            capture: actualCapture,
+            data: capturedData(actualData, actualCapture),
+            usage: { inputTokens: totalInput, outputTokens: totalOutput },
+          };
           await input.checkpointer.save(record);
         }
         await parent?.usage(usage);
@@ -625,6 +579,49 @@ export function createTraceLifecycle(input: {
   }
 
   return {
+    active: () => backend.active?.(),
+    pendingTool(
+      record: ScopeRecord,
+      options: { executionContext?: import("#tracing/core/types.js").ExecutionContext } = {},
+    ) {
+      return pendingTool({
+        record,
+        backend,
+        executionContext: options.executionContext,
+        resolve: (record, options) =>
+          construct(record.identity, record.capture, record.data, undefined, record.attempt, {
+            key: record.key,
+            reference: record.reference,
+            parent: record.parent,
+            startTimeMs: record.startTimeMs,
+            outputContext: record.outputContext,
+            executionContext: options.executionContext,
+          }),
+      });
+    },
+    run<T>(
+      reference: TraceReference,
+      capture: CaptureDecision,
+      execute: () => T,
+      executionContext?: import("#tracing/core/types.js").ExecutionContext,
+    ) {
+      const active = backend.active?.();
+      return backend.run(
+        reference,
+        capture,
+        execute,
+        executionContext,
+        active?.reference.spanId === reference.spanId &&
+          active.reference.traceId === reference.traceId
+          ? active
+          : undefined,
+      );
+    },
+    reserve(options: { key: string; parent?: TraceReference; traceFlags: number }): TraceReference {
+      if (!("reserveReference" in backend))
+        throw new Error("Reference reservation requires a durable backend.");
+      return backend.reserveReference(options);
+    },
     sample(record: ScopeRecord): boolean {
       const backend = input.backend;
       if (!("admits" in backend)) return (record.reference.traceFlags & 1) !== 0;

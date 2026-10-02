@@ -1,6 +1,7 @@
 import type { Telemetry, TelemetryOptions } from "ai";
 import { scopeRuntime, type RuntimeScope, type TurnScope } from "#tracing/core/scopes.js";
-import type { ContentPart } from "#tracing/core/types.js";
+import { modelContent, modelUsage } from "#tracing/adapters/ai-sdk-payload.js";
+import { readGatewayCostData } from "#tracing/adapters/gateway.js";
 
 type Event<K extends keyof Telemetry> = Parameters<NonNullable<Telemetry[K]>>[0];
 
@@ -72,18 +73,11 @@ export function aiSdkTracing(
       starts.delete(event.callId);
       await active?.finish({
         model: {
-          usage: {
-            inputTokens: event.usage.inputTokens,
-            outputTokens: event.usage.outputTokens,
-            inputTokenDetails: {
-              cacheReadTokens: event.usage.inputTokenDetails?.cacheReadTokens,
-              cacheWriteTokens: event.usage.inputTokenDetails?.cacheWriteTokens,
-            },
-          },
+          usage: modelUsage(event.usage),
           responseId: event.responseId,
           responseModelId: event.modelId,
           finishReason: event.finishReason,
-          content: activation.capture.recordOutputs ? contentParts(event.content) : undefined,
+          content: activation.capture.recordOutputs ? modelContent(event.content) : undefined,
         },
       });
     },
@@ -113,22 +107,8 @@ export function aiSdkTracing(
       await active.action.finish(terminal);
     },
     async onStepEnd(event) {
-      const gateway = event.providerMetadata?.gateway;
-      if (gateway !== undefined && typeof gateway === "object" && gateway !== null) {
-        const data = gateway as Record<string, unknown>;
-        const number = (value: unknown) => {
-          if (typeof value !== "string" || value.trim() === "") return undefined;
-          const parsed = Number(value);
-          return Number.isFinite(parsed) ? parsed : undefined;
-        };
-        step?.cost({
-          cost: number(data.cost),
-          gatewayCost: number(data.gatewayCost),
-          inputCost: number(data.inputInferenceCost),
-          outputCost: number(data.outputInferenceCost),
-          generationId: typeof data.generationId === "string" ? data.generationId : undefined,
-        });
-      }
+      const cost = readGatewayCostData(event.providerMetadata);
+      if (cost !== undefined) step?.cost(cost);
       await drain();
     },
     async onAbort() {
@@ -147,45 +127,4 @@ export function aiSdkTracing(
     recordOutputs: activation.capture.recordOutputs,
     integrations: [integration, ...(options.integrations ?? [])],
   };
-}
-
-function contentParts(content: Event<"onLanguageModelCallEnd">["content"]): readonly ContentPart[] {
-  return content.flatMap((part): ContentPart[] => {
-    switch (part.type) {
-      case "text":
-      case "reasoning":
-        return [{ type: part.type, text: part.text }];
-      case "tool-call":
-        return [
-          {
-            type: "tool-call",
-            callId: part.toolCallId,
-            toolName: part.toolName,
-            input: part.input,
-          },
-        ];
-      case "tool-result":
-        return [
-          {
-            type: "tool-result",
-            callId: part.toolCallId,
-            toolName: part.toolName,
-            input: part.input,
-            output: part.output,
-          },
-        ];
-      case "tool-error":
-        return [
-          {
-            type: "tool-error",
-            callId: part.toolCallId,
-            toolName: part.toolName,
-            input: part.input,
-            error: part.error,
-          },
-        ];
-      default:
-        return [];
-    }
-  });
 }

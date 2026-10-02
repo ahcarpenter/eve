@@ -105,6 +105,16 @@ checkpointer adapter. Construct ordinary children directly from the resolved
 parent; the lifecycle inherits attempt and output context automatically.
 
 Transport adapters use `tracing.lifecycle.request()` or `.mcp()`.
+`lifecycle.active()` identifies the semantic operation during `scope.run()` and
+callback execution. The OTel adapter carries that operation across async calls.
+Activation intersects capture permissions; nested adapters cannot broaden them.
+Configure the MCP adapter through `adapter.mcp: createMcpTracing` and use
+`tracing.mcpAdapter` for discovery and calls. It enriches an active tool instead
+of creating a duplicate MCP call span.
+
+`lifecycle.pendingTool(record)` retains semantic updates while the runtime finds
+the action parent. Attach that parent before emission, or drain with the recorded
+fallback parent. Existing host records remain the checkpoint authority.
 They supply protocol data, not span names or OTel options. The backend remains
 the only component that starts OTel spans.
 

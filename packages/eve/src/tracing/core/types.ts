@@ -69,11 +69,25 @@ export interface TraceBackend {
     capture: CaptureDecision,
     execute: () => T,
     executionContext?: ExecutionContext,
+    operation?: ActiveOperation,
   ): T;
   current(): TraceReference | undefined;
+  active?(): ActiveOperation | undefined;
+}
+
+export interface ActiveOperation {
+  readonly type: SpanType;
+  readonly reference: TraceReference;
+  readonly capture: CaptureDecision;
+  readonly mcp?: import("#tracing/core/mcp.js").McpLifecycle;
 }
 
 export interface DurableTraceBackend extends TraceBackend {
+  reserveReference(input: {
+    key: string;
+    parent?: TraceReference;
+    traceFlags: number;
+  }): TraceReference;
   admits(span: PreparedSpan, reference: TraceReference): boolean;
   reserveActivation(input: {
     key: string;

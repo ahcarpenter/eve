@@ -6,7 +6,7 @@ import type {
   PreparedSpan,
   TraceReference,
 } from "#tracing/core/types.js";
-import { withoutDeclinedContent } from "#tracing/content-attributes.js";
+import { withoutDeclinedContent } from "#tracing/core/content-policy.js";
 
 export interface DurableSpanRecord {
   readonly span: PreparedSpan;

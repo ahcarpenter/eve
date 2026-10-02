@@ -13,7 +13,7 @@ import { liveOtelBackend, durableOtelBackend } from "#tracing/adapters/otel.js";
 import { aiSdkTracing } from "#tracing/adapters/ai-sdk.js";
 import { aiSdkContentSerializer } from "#tracing/adapters/serializer.js";
 import { eveOutputMapping } from "#tracing/adapters/eve/compatibility.js";
-import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+import { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import { createTraceEngine } from "#tracing/core/engine.js";
 import { createDurableTraceDriver, type DurableSpanRecord } from "#tracing/core/durable.js";
 import { ROOT_CONTEXT, createContextKey } from "@opentelemetry/api";

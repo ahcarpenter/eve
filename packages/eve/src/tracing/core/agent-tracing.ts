@@ -13,12 +13,17 @@ import type {
   TraceReference,
 } from "#tracing/core/types.js";
 import { createTransportLifecycle } from "#tracing/core/transports.js";
+import { guardedCheckpointer } from "#tracing/core/checkpointer.js";
 
 type Integrations = Readonly<Record<string, (scope: TurnScope) => unknown>>;
-export interface TracingAdapter<TIntegrations extends Integrations = Integrations> {
+export interface TracingAdapter<TIntegrations extends Integrations = Integrations, TMcp = unknown> {
   readonly backend: TraceBackend;
   readonly serializer: ContentSerializer;
   readonly integrations?: TIntegrations;
+  readonly mcp?: (
+    lifecycle: ReturnType<typeof createTraceLifecycle> &
+      ReturnType<typeof createTransportLifecycle>,
+  ) => TMcp;
 }
 
 export interface TurnInput extends RunIdentity {
@@ -33,18 +38,25 @@ export type { TurnScope } from "#tracing/core/scopes.js";
 
 export function createAgentTracing<
   TIntegrations extends Integrations = Record<never, never>,
+  TMcp = unknown,
 >(input: {
   readonly agentName?: string;
   readonly framework?: FrameworkIdentity;
-  readonly adapter: TracingAdapter<TIntegrations>;
+  readonly adapter: TracingAdapter<TIntegrations, TMcp>;
   readonly checkpointer?: TraceCheckpointer;
   readonly content?: { readonly recordInputs: boolean; readonly recordOutputs: boolean };
   readonly diagnostic?: (code: string) => void;
 }) {
-  const runtime = createTraceLifecycle({ ...input, ...input.adapter });
+  const runtime = createTraceLifecycle({
+    ...input,
+    ...input.adapter,
+    checkpointer: guardedCheckpointer(input.checkpointer, input.diagnostic),
+  });
   const transports = createTransportLifecycle(input.adapter.backend, input.adapter.serializer);
+  const lifecycle = { ...runtime, ...transports };
   return {
-    lifecycle: { ...runtime, ...transports },
+    lifecycle,
+    mcpAdapter: input.adapter.mcp?.(lifecycle),
     integrations: input.adapter.integrations ?? ({} as TIntegrations),
     async request<T extends { status: number }>(
       options: Parameters<typeof transports.request>[0] & {
