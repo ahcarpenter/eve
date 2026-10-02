@@ -1,47 +1,89 @@
 # Agent tracing
 
-This internal library records eve runtime operations and request/MCP transports.
-These modules are not public package exports. There is no callback authoring API
-or standalone AI SDK instrumentation pipeline.
+This library records agent operations, channel requests, and MCP calls.
+It uses OpenTelemetry (OTel) to export trace spans.
 
-Create tracing at application startup:
+## Start tracing
+
+Create tracing before the application accepts requests:
 
 ```ts
+import { createAgentTracing } from "#tracing/lib/agent-tracing.js";
+
 const tracing = createAgentTracing({ serviceName: "support" });
 ```
 
-The factory owns process-wide OTel registration, stable IDs, sampling, default
-serialization, and flush/shutdown. On Vercel the default destination reports
-immediately through request context. An explicit `otel` configuration supplies
-the complete destination list; it does not add another automatic destination.
-Instances share registration when service name and configuration are identical.
-Conflicting configuration or an unrelated global provider fails explicitly.
-Initialize before requests and shut down once when the process ends.
+The factory registers OTel and sets up trace IDs, sampling, and content
+serialization. On Vercel, the default destination sends completed spans through
+the active request context.
 
-eve discovers its own declarations and passes `otel: collected.configuration`.
-The library does not load instrumentation files or infer trusted capture policy.
+Use `otel` to supply the complete OTel configuration:
 
-Tracing resolves semantic records supplied by eve's checkpoint
-codec. Operation-specific handles activate context and complete operations with
-explicit outcomes. Attempts create model-call handles. Other operations resolve
-from runtime events; the library does not run agent work or manage checkpoints.
+```ts
+const tracing = createAgentTracing({
+  serviceName: agentName,
+  otel: collected.configuration,
+});
+```
 
-Tool-call inputs reserve references inside the recorder. The recorder retains
-MCP enrichment and terminal state until the action parent is available, then
-attaches and completes the tool span. Attempt completion drains remaining tools.
-Retained tool payloads are detached and bounded. Capture permissions can decrease
-but cannot increase.
+The configuration selects destinations, resource attributes, sampling, and
+propagation. Tracing instances share one registration when they use the same
+service name and configuration object. A configuration conflict causes an error.
 
-`createTransportLifecycle` records channel requests and MCP operations.
-`createMcpTracing` reuses an active tool operation rather than adding a duplicate
-call span. eve's SDK event bridge uses the shared payload conversions, not a
-separate SDK tracing adapter.
+Call `forceFlush()` to send pending spans. Call `shutdown()` when the process ends.
 
-The library owns trace schema version 4. eve's output profile retains existing
-link keys and Vercel attribution without rewriting the schema version. Portable
-references preserve W3C tracestate.
+## Record agent operations
 
-`tracing/eve/` owns trusted policy, workflow/checkpoint integration, declaration
-discovery, and audience-aware destination filtering. `tracing/local/` owns trace
-storage and viewer queries. The library owns OTel registration, batching, and
-Vercel request-context export; it does not import eve or local tracing modules.
+Pass an operation record to `resolve()`. The record supplies the operation type,
+identity, parent reference, start time, and capture permissions.
+
+The returned handle provides these methods:
+
+- `run()`: make the operation context active during execution.
+- `complete()`: record the operation result and end the span.
+
+An attempt handle also provides `modelCall()` and `cost()`.
+Completion results specify outcomes such as completed, failed, approved, or denied.
+
+Spans use this parent structure:
+
+```text
+turn
+└── attempt
+    ├── model call
+    └── action
+        ├── approval
+        └── tool execution
+```
+
+Attempts use the span name `agent.step`. Trace output uses schema version 4.
+Trace references preserve W3C tracestate.
+
+## Record tool executions
+
+Use `toolCall()` to register a tool execution. Supply its execution key, action
+key, attempt group, and fallback parent reference.
+
+The recorder keeps MCP data and the completion result until the action parent
+is available. Call `actionAvailable()` to attach that parent. Call `completeTool()`
+to record the result. Call `endAttempt()` to complete remaining tool spans.
+
+The recorder copies retained tool data and limits its size. Capture permissions
+can only become more restrictive.
+
+## Record requests and MCP calls
+
+`createTransportLifecycle()` records channel requests and MCP operations.
+`createMcpTracing()` records MCP data on the active tool operation. For calls
+outside a tool execution, it creates an MCP span.
+
+Shared SDK conversion functions prepare model content and usage for recording.
+The batching processor sends completed spans to configured exporters.
+
+## Module responsibilities
+
+| Directory        | Responsibility                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------ |
+| `tracing/lib/`   | Operation recording, context activation, OTel setup, batching, and Vercel export.                |
+| `tracing/eve/`   | eve event translation, checkpoint conversion, declaration collection, and capture/export policy. |
+| `tracing/local/` | Trace storage, retention, queries, and viewer support.                                           |
