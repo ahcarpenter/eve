@@ -4,8 +4,19 @@ import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-ho
 import { isTracingSuppressed } from "@opentelemetry/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { batchSpanProcessor } from "#tracing/batch-span-processor.js";
+import { batchSpanProcessor as createBatchSpanProcessor } from "#tracing/lib/adapters/batch-span-processor.js";
+import { createLogger } from "#internal/logging.js";
 import { captureLogRecords } from "#internal/testing/log-records.js";
+
+function batchSpanProcessor(
+  exporter: SpanExporter,
+  options: Parameters<typeof createBatchSpanProcessor>[1] = {},
+) {
+  return createBatchSpanProcessor(exporter, {
+    ...options,
+    diagnostic: (message, details) => createLogger("test.export").warn(message, details),
+  });
+}
 
 interface RecordingExporter extends SpanExporter {
   readonly batches: readonly (readonly unknown[])[];

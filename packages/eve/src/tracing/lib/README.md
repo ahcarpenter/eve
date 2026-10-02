@@ -41,6 +41,7 @@ The library owns trace schema version 4. eve's output profile retains existing
 link keys and Vercel attribution without rewriting the schema version. Portable
 references preserve W3C tracestate.
 
-Trusted policy, workflow ownership, checkpoint persistence,
-destination filtering, local storage, and Agent Runs export stay outside the
-library in eve integration.
+`tracing/eve/` owns trusted policy, workflow/checkpoint integration, declaration
+discovery, and audience-aware destination filtering. `tracing/local/` owns trace
+storage and viewer queries. The library owns OTel registration, batching, and
+Vercel request-context export; it does not import eve or local tracing modules.

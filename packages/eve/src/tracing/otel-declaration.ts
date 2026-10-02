@@ -10,7 +10,7 @@ import type {
 import { PROVIDER, type InstrumentationProvider } from "#public/instrumentation/provider.js";
 import type { InstrumentationRuntimeContextInput } from "#public/instrumentation/index.js";
 import type { JsonObject } from "#shared/json.js";
-import { batchSpanProcessor } from "#tracing/batch-span-processor.js";
+import { batchSpanProcessor } from "#tracing/lib/adapters/batch-span-processor.js";
 import { contentFilteringProcessor } from "#tracing/content-span-processor.js";
 import { vercelRuntimeSpanProcessor } from "#tracing/lib/adapters/vercel-runtime-span-exporter.js";
 import type { TraceCapturePolicy } from "#shared/trace-policy.js";
