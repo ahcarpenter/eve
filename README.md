@@ -89,7 +89,7 @@ stream requests: 3
 
 The three `workflow.stream.read.connect` lines are the fault as a Vercel deployment logs it, one per stream request.
 
-The other lines come from the same fault on another path, and belong to the local run. With a custom world configured, eve runs the workflow in the same process and the same trace as the request that started it. When `workflow.start` ends, the workflow's spans are still open, are ended early and later end themselves.
+The other lines come from the same fault on another path, and belong to the local run. With a custom world configured, eve runs the workflow in the process of the request that started it, in the trace of its `workflow.start` span. When `workflow.start` ends, the workflow's spans are still open, are ended early and later end themselves.
 
 ### Comparisons
 
