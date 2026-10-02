@@ -50,6 +50,8 @@ export interface ScopeRecord {
 }
 
 export interface RuntimeScope {
+  readonly parent?: TraceReference;
+  readonly startTimeMs: number;
   readonly description: ScopeData;
   child(data: ScopeData, key?: string): Promise<RuntimeScope>;
   readonly type: ScopeData["type"];
@@ -131,6 +133,8 @@ export interface ScopeCost {
 }
 
 export interface RuntimeBinding {
+  readonly reservationKey?: string;
+  readonly parentKey?: string;
   readonly key: string;
   readonly reference?: TraceReference;
   readonly startTimeMs?: number;

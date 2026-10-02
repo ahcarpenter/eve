@@ -58,21 +58,55 @@ export function createTraceRecorder(input: {
     }
   }
   return {
+    session(identity: ScopeIdentity, capture: CaptureDecision) {
+      return runtime.reserve({
+        key: `session:${identity.runId}`,
+        traceFlags: capture.emit ? 1 : 0,
+      });
+    },
+    turnReference(key: string, capture: CaptureDecision) {
+      return runtime.reserve({ key: `turn:${key}`, traceFlags: capture.emit ? 1 : 0 });
+    },
     turn(input: RuntimeOperationInput & { metadata: TurnMetadata }) {
       return start<"activation">(input, { type: "activation", options: input.metadata });
     },
     attempt(input: RuntimeOperationInput & { step: StepOptions }) {
-      return start<"step">(input, { type: "step", options: input.step });
+      return start<"step">(
+        { ...input, binding: { ...input.binding, reservationKey: input.binding.key } },
+        { type: "step", options: input.step },
+      );
     },
-    action(input: RuntimeOperationInput & { action: ActionOptions }) {
-      return start<"action">(input, { type: "action", options: input.action });
+    action(
+      input: RuntimeOperationInput & {
+        action: ActionOptions;
+        executionKey: string;
+        attemptKey: string;
+      },
+    ) {
+      return start<"action">(
+        {
+          ...input,
+          binding: {
+            ...input.binding,
+            reservationKey: `action:${input.executionKey}`,
+            parentKey: input.attemptKey,
+          },
+        },
+        { type: "action", options: input.action },
+      );
     },
     approval(
       input: RuntimeOperationInput & {
         approval: Extract<ScopeRecord["data"], { type: "approval" }>["options"];
       },
     ) {
-      return start<"approval">(input, { type: "approval", options: input.approval });
+      return start<"approval">(
+        {
+          ...input,
+          binding: { ...input.binding, reservationKey: `approval:${input.binding.key}` },
+        },
+        { type: "approval", options: input.approval },
+      );
     },
     memory(input: RuntimeOperationInput & { memory: MemoryOptions }) {
       return start<"memory">(input, { type: "memory", options: input.memory });
@@ -94,7 +128,6 @@ export function createTraceRecorder(input: {
     },
     active: runtime.active,
     run: runtime.run,
-    reserve: runtime.reserve,
     sample: runtime.sample,
     async resolve<K extends ScopeRecord["data"]["type"]>(
       record: ScopeRecord & { data: { type: K } },

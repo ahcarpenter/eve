@@ -25,6 +25,8 @@ type TurnCompletion =
   | { outcome: "completed" | "cancelled"; usage?: ScopeTerminal["usage"] }
   | Failure;
 export interface Operation<K extends ScopeRecord["data"]["type"], R> {
+  readonly startTimeMs: number;
+  readonly parent?: RuntimeScope["reference"];
   readonly type: K;
   readonly reference: RuntimeScope["reference"];
   readonly finished: boolean;
@@ -96,6 +98,8 @@ export type Completion = (
 
 export function operationHandle(runtime: RuntimeScope): RestoredOperation {
   const common = {
+    startTimeMs: runtime.startTimeMs,
+    parent: runtime.parent,
     reference: runtime.reference,
     get finished() {
       return runtime.finished;

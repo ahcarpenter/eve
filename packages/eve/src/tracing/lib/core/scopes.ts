@@ -95,7 +95,11 @@ export function createTraceLifecycle(input: {
   ): Promise<RuntimeScope> {
     const key = binding.key;
     const startTimeMs = binding.startTimeMs ?? Date.now();
-    const parentReference = parent?.reference ?? binding.parent;
+    const durable = input.backend;
+    const parentReference =
+      binding.parentKey !== undefined && binding.parent !== undefined && "reserveChild" in durable
+        ? durable.reserveChild(binding.parent, binding.parentKey)
+        : (parent?.reference ?? binding.parent);
     const actualIdentity = identity;
     capture = intersectCapture(capture, input.backend.active?.()?.capture);
     let actualCapture = capture;
@@ -139,18 +143,25 @@ export function createTraceLifecycle(input: {
         },
       };
     }
-    const durable = input.backend;
     const deferred = binding?.deferred ?? input.mode === "durable";
     let reference = binding.reference;
-    if (deferred && reference === undefined) {
+    if (
+      reference === undefined &&
+      (deferred || binding.reservationKey !== undefined) &&
+      "reserveActivation" in durable
+    ) {
       if (!("reserveActivation" in durable))
         throw new Error("Checkpointed trace scopes require reserved-ID backend support.");
       reference =
         data.type === "activation"
-          ? durable.reserveActivation({ key, span: prepared, capture: actualCapture })
+          ? durable.reserveActivation({
+              key: binding.reservationKey ?? key,
+              span: prepared,
+              capture: actualCapture,
+            })
           : parentReference === undefined
             ? undefined
-            : durable.reserveChild(parentReference, key);
+            : durable.reserveChild(parentReference, binding.reservationKey ?? key);
     }
     let operation: TraceOperation | undefined = deferred
       ? undefined
@@ -211,6 +222,8 @@ export function createTraceLifecycle(input: {
       return next;
     }
     const runtime: RuntimeScope = {
+      parent: parentReference,
+      startTimeMs,
       get description() {
         return actualData;
       },
