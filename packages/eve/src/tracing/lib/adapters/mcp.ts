@@ -9,7 +9,7 @@ import {
 import type { McpLifecycle, McpUpdate } from "#tracing/lib/core/mcp.js";
 import { activeTraceOperation } from "#tracing/lib/adapters/otel.js";
 import type { createTransportLifecycle } from "#tracing/lib/core/transports.js";
-import { truncateTelemetryText } from "#tracing/telemetry-budget.js";
+import { truncateTelemetryText } from "#tracing/lib/adapters/serialization.js";
 import { isObject } from "#shared/guards.js";
 
 const MAX_MCP_TRACE_REQUEST_BYTES = 1024 * 1024;

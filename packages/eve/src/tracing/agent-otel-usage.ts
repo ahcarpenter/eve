@@ -2,7 +2,7 @@ import type { Span } from "#compiled/@opentelemetry/api/index.js";
 
 import type { InstrumentationUsage } from "#instrumentation/lifecycle.js";
 import type { AgentTurnTraceState } from "#tracing/agent-trace-state.js";
-import { AGENT_USAGE_ATTRIBUTES } from "#tracing/agent-span-contract.js";
+import { USAGE_FIELDS as AGENT_USAGE_ATTRIBUTES } from "#tracing/lib/core/contract.js";
 
 /** Applies eve's structural token usage attributes to an agent span. */
 export function setAgentUsage(span: Span, usage: InstrumentationUsage): void {

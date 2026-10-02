@@ -23,9 +23,9 @@ import { agentSpanNamingAttributes } from "#tracing/agent-span-naming.js";
 import type { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
 import type { AgentActionTraceState, AgentTraceStateStore } from "#tracing/agent-trace-state.js";
 import { normalizeChannelAudience } from "#shared/channel-audience.js";
-import { isSampledTrace } from "#tracing/sampled-trace.js";
+import { isSampledTrace } from "#shared/trace-policy.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
-import { AGENT_SPAN_NAMES } from "#tracing/agent-span-contract.js";
+import { SPAN_NAMES as AGENT_SPAN_NAMES } from "#tracing/lib/core/contract.js";
 import { recordAgentSpanError as recordError } from "#tracing/agent-span-error.js";
 
 interface AgentActionInstrumentation {

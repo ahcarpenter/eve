@@ -11,8 +11,8 @@ import {
 import { getInstrumentationRuntime } from "#instrumentation/runtime.js";
 import { markAgentTraceContext } from "#tracing/agent-trace-context.js";
 import { agentSpanNamingAttributes } from "#tracing/agent-span-naming.js";
-import { AGENT_SPAN_NAMES } from "#tracing/agent-span-contract.js";
-import { withErrorContent } from "#tracing/error-content-context.js";
+import { SPAN_NAMES as AGENT_SPAN_NAMES } from "#tracing/lib/core/contract.js";
+import { withErrorContent } from "#tracing/lib/adapters/otel.js";
 
 /**
  * Stable tracer name for every inbound eve channel HTTP request. Kept

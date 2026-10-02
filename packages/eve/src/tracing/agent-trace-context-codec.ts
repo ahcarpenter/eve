@@ -7,8 +7,8 @@ import type {
 } from "#tracing/agent-trace-state.js";
 import { normalizeChannelAudience } from "#shared/channel-audience.js";
 import { readInstrumentationDecision } from "#shared/instrumentation-decision.js";
-import { boundedTraceError } from "#tracing/bounded-error.js";
-import { boundedPrincipalId } from "#tracing/telemetry-budget.js";
+import { boundedTraceError } from "#tracing/lib/adapters/serialization.js";
+import { boundedPrincipalId } from "#tracing/lib/adapters/serialization.js";
 import { isInstrumentationPrincipalType } from "#instrumentation/lifecycle.js";
 
 export const AGENT_TRACE_CONTEXT_KEY = "eve.harness.agentTrace";

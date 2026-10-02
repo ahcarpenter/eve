@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { withoutDeclinedContent } from "#tracing/content-attributes.js";
+import { withoutDeclinedContent } from "#tracing/lib/core/content-policy.js";
 
 const ATTRIBUTES = {
   "agent.channel.delivery.input": '{"message":"private"}',

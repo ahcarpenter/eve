@@ -19,7 +19,7 @@ import {
   recordAgentToolSpanError,
   withAgentToolSpanContext,
 } from "#tracing/agent-tool-span-context.js";
-import { truncateTelemetryText } from "#tracing/telemetry-budget.js";
+import { truncateTelemetryText } from "#tracing/lib/adapters/serialization.js";
 import { replaceBaggageMember } from "#protocol/baggage.js";
 import { isObject } from "#shared/guards.js";
 

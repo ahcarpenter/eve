@@ -14,13 +14,11 @@ import {
   isSampledTrace,
   resolveTracePolicy,
   resolveTracePolicyDecision,
-} from "#tracing/sampled-trace.js";
+} from "#shared/trace-policy.js";
 import type { AgentSessionTraceState, AgentTraceStateStore } from "#tracing/agent-trace-state.js";
 import { readInstrumentationDecision } from "#shared/instrumentation-decision.js";
-import {
-  agentInvocationSpanName,
-  type AgentSamplingOperation,
-} from "#tracing/agent-span-contract.js";
+import { invocationName as agentInvocationSpanName } from "#tracing/lib/core/contract.js";
+import { type SamplingOperation as AgentSamplingOperation } from "#tracing/lib/adapters/otel-registration.js";
 import { agentActivationAttributes } from "#tracing/agent-otel-runtime-context.js";
 import type { AgentTurnTraceState } from "#tracing/agent-trace-state.js";
 import { applyPrincipalTraceDecision } from "#instrumentation/principal-summary.js";

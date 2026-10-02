@@ -6,7 +6,7 @@ import {
   trace,
   type Span,
 } from "#compiled/@opentelemetry/api/index.js";
-import { withErrorContent } from "#tracing/error-content-context.js";
+import { withErrorContent } from "#tracing/lib/adapters/otel.js";
 
 import {
   createErrorId,

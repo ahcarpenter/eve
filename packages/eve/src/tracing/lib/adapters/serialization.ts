@@ -8,6 +8,53 @@
 
 /** Content attributes are capped so a giant payload cannot bloat a span segment. */
 export const CONTENT_ATTRIBUTE_LIMIT = 32 * 1024;
+import type { ContentSerializer } from "#tracing/lib/core/model.js";
+
+export const aiSdkContentSerializer: ContentSerializer = {
+  json: contentAttribute,
+  text: textContentAttribute,
+  inputMessages: (messages) =>
+    genAiInputMessagesAttribute(messages, (value) =>
+      typeof value === "string" ? value : undefined,
+    ),
+  instructions: genAiSystemInstructionsAttribute,
+  outputMessages: genAiOutputMessagesAttribute,
+  toolResults: toolResultsContentAttribute,
+};
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+const MARKER = "... [truncated]";
+
+export function telemetryByteLength(text: string): number {
+  return encoder.encode(text).length;
+}
+
+export function truncateTelemetryText(text: string, maxBytes: number): string {
+  const prefix = text.slice(0, maxBytes + 1);
+  const bytes = encoder.encode(prefix);
+  if (prefix.length === text.length && bytes.length <= maxBytes) return text;
+  const marker = MARKER.slice(0, maxBytes);
+  let end = Math.max(0, maxBytes - marker.length);
+  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end -= 1;
+  return decoder.decode(bytes.subarray(0, end)) + marker;
+}
+
+export function boundedPrincipalId(value: unknown): string | undefined {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 1024 &&
+    telemetryByteLength(value) <= 1024
+    ? value
+    : undefined;
+}
+
+export function boundedTraceError(value: Error): Error {
+  const error = new Error(truncateTelemetryText(value.message, 4096));
+  error.name = truncateTelemetryText(value.name, 128);
+  error.stack = value.stack === undefined ? undefined : truncateTelemetryText(value.stack, 8192);
+  return error;
+}
 
 /** Serializes one payload value as capped JSON. */
 export function contentAttribute(value: unknown): string | undefined {

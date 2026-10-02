@@ -11,7 +11,7 @@ import { ActiveChannelDeliveriesKey } from "#context/keys.js";
 import type { JsonValue } from "#shared/json.js";
 import { contentAttribute } from "#tracing/agent-otel-content.js";
 import type { AgentTraceStateStore } from "#tracing/agent-trace-state.js";
-import { isSampledTrace } from "#tracing/sampled-trace.js";
+import { isSampledTrace } from "#shared/trace-policy.js";
 
 interface ChannelDeliveryState {
   readonly inputAttribute?: string;

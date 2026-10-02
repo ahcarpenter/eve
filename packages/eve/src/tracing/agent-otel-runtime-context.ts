@@ -1,7 +1,7 @@
 import type { AgentSessionTraceState, AgentTurnTraceState } from "#tracing/agent-trace-state.js";
 import type { InstrumentationStepAttemptStartedEvent } from "#instrumentation/lifecycle.js";
 import { agentSpanNamingAttributes } from "#tracing/agent-span-naming.js";
-import { agentInvocationSpanName } from "#tracing/agent-span-contract.js";
+import { invocationName as agentInvocationSpanName } from "#tracing/lib/core/contract.js";
 import { agentTraceIdentityAttributes, traceSessionIdOf } from "#tracing/agent-otel-attributes.js";
 import { normalizeInstrumentationChannelKind } from "#internal/instrumentation.js";
 

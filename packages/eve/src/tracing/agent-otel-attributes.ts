@@ -1,5 +1,5 @@
 import { resolveConversationId } from "#shared/conversation-identity.js";
-import { AGENT_TRACE_SCHEMA_VERSION } from "#tracing/agent-span-contract.js";
+import { TRACE_SCHEMA_VERSION as AGENT_TRACE_SCHEMA_VERSION } from "#tracing/lib/core/schema.js";
 
 export function traceSessionIdOf(scope: {
   readonly traceSessionId?: string;

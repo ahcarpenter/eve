@@ -103,32 +103,13 @@ export function operationHandle(runtime: RuntimeScope): RestoredOperation {
       } catch {}
     },
   };
-  switch (runtime.type) {
-    case "activation":
-      return {
-        ...common,
-        type: "activation",
-      };
-    case "step":
-      return {
-        ...common,
-        type: "step",
-        cost: (input) => runtime.cost(input),
-        modelCall: async (options, key) =>
-          operationHandle(await runtime.model(options, { key })) as ModelOperation,
-      };
-    case "action":
-      return {
-        ...common,
-        type: "action",
-      };
-    case "model":
-      return { ...common, type: "model" };
-    case "tool":
-      return { ...common, type: "tool" };
-    case "approval":
-      return { ...common, type: "approval" };
-    case "memory":
-      return { ...common, type: "memory" };
-  }
+  if (runtime.type === "step")
+    return {
+      ...common,
+      type: "step",
+      cost: (input) => runtime.cost(input),
+      modelCall: async (options, key) =>
+        operationHandle(await runtime.model(options, { key })) as ModelOperation,
+    };
+  return { ...common, type: runtime.type };
 }

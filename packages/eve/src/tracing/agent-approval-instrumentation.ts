@@ -16,7 +16,7 @@ import { contentAttribute } from "#tracing/agent-otel-content.js";
 import { agentSpanNamingAttributes } from "#tracing/agent-span-naming.js";
 import { agentTraceIdentityAttributes, traceSessionIdOf } from "#tracing/agent-otel-attributes.js";
 import { decodeTraceSessionId } from "#tracing/agent-trace-context-codec.js";
-import { AGENT_SPAN_NAMES } from "#tracing/agent-span-contract.js";
+import { SPAN_NAMES as AGENT_SPAN_NAMES } from "#tracing/lib/core/contract.js";
 import { recordAgentSpanError as recordError } from "#tracing/agent-span-error.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
 import type { AgentActionContext } from "#tracing/agent-action-instrumentation.js";

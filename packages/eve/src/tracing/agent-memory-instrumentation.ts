@@ -29,8 +29,8 @@ import { recordAgentSpanError } from "#tracing/agent-span-error.js";
 import { agentSpanNamingAttributes } from "#tracing/agent-span-naming.js";
 import type { AgentTraceStateStore } from "#tracing/agent-trace-state.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
-import { withErrorContent } from "#tracing/error-content-context.js";
-import { isSampledTrace } from "#tracing/sampled-trace.js";
+import { withErrorContent } from "#tracing/lib/adapters/otel.js";
+import { isSampledTrace } from "#shared/trace-policy.js";
 import { suppressTracing } from "#tracing/suppress-tracing.js";
 import type { ConversationEnvironment } from "#shared/conversation-context.js";
 

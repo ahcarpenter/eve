@@ -50,13 +50,13 @@ import {
 } from "#instrumentation/memory.js";
 import { ConversationIdKey, ParentSessionKey } from "#context/keys.js";
 import type { ConversationContext } from "#shared/conversation-context.js";
-import { withErrorContent } from "#tracing/error-content-context.js";
-import type { AgentSamplingOperation } from "#tracing/agent-span-contract.js";
+import { withErrorContent } from "#tracing/lib/adapters/otel.js";
+import type { SamplingOperation as AgentSamplingOperation } from "#tracing/lib/adapters/otel-registration.js";
 import {
   isSampledTrace,
   resolveTracePolicy,
   resolveTracePolicyDecision,
-} from "#tracing/sampled-trace.js";
+} from "#shared/trace-policy.js";
 import { readInstrumentationSessionContext } from "#instrumentation/session-context.js";
 import { readSessionTraceDecision } from "#tracing/agent-trace-context-store.js";
 import { readInstrumentationDecision } from "#shared/instrumentation-decision.js";

@@ -15,7 +15,7 @@ import {
   trace as runtimeTrace,
 } from "#compiled/@opentelemetry/api/index.js";
 import { registerOtelPipeline } from "#tracing/lib/adapters/otel-registration.js";
-import { withErrorContent } from "#tracing/error-content-context.js";
+import { withErrorContent } from "#tracing/lib/adapters/otel.js";
 import { createLogger, logError } from "#internal/logging.js";
 
 const require = createRequire(import.meta.url);

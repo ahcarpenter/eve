@@ -19,7 +19,7 @@ import { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import type { OtelConfiguration } from "#tracing/lib/adapters/otel-configuration.js";
 import { invocationName } from "#tracing/lib/core/contract.js";
 import type { Attributes } from "#tracing/lib/core/types.js";
-type SamplingOperation = { readonly name: string; readonly attributes?: Attributes };
+export type SamplingOperation = { readonly name: string; readonly attributes?: Attributes };
 
 const REGISTRATION_SPAN_NAME = "eve.otel.registration";
 const REPLAY_DEDUPLICATION_LIMIT = 100_000;

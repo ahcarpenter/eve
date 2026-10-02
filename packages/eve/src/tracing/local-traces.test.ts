@@ -7,7 +7,7 @@ import {
   createLocalTracesProcessor,
   resolveLocalTracesExportPolicy,
 } from "#tracing/local-traces.js";
-import { resolveTracePolicy } from "#tracing/sampled-trace.js";
+import { resolveTracePolicy } from "#shared/trace-policy.js";
 import { localTraces } from "#public/instrumentation/otel.js";
 
 vi.mock("#tracing/local-trace-span-processor.js", () => ({

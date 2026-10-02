@@ -6,7 +6,7 @@ import {
 import type { OtelConfiguration } from "#tracing/lib/adapters/otel-configuration.js";
 import { vercelRuntimeSpanProcessor } from "#tracing/lib/adapters/vercel-runtime-span-exporter.js";
 import { durableOtelBackend } from "#tracing/lib/adapters/otel.js";
-import { aiSdkContentSerializer } from "#tracing/lib/adapters/serializer.js";
+import { aiSdkContentSerializer } from "#tracing/lib/adapters/serialization.js";
 import { createTraceRecorder } from "#tracing/lib/core/recorder.js";
 import type { OutputMapping } from "#tracing/lib/core/types.js";
 

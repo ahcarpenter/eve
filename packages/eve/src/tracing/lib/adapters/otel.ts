@@ -11,8 +11,6 @@ import {
   type Tracer,
 } from "#compiled/@opentelemetry/api/index.js";
 import { recordAgentSpanError } from "#tracing/lib/adapters/otel-error.js";
-import { withErrorContent } from "#tracing/error-content-context.js";
-import { suppressTracing } from "#tracing/suppress-tracing.js";
 import type { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import type {
   Attributes,
@@ -29,6 +27,20 @@ import { linkAttributes } from "#tracing/lib/core/links.js";
 import { activeOperation, intersectCapture } from "#tracing/lib/core/activation.js";
 
 const ACTIVE_OPERATION = createContextKey("agent.tracing.active-operation");
+const ERROR_CONTENT_KEY = createContextKey("eve.trace.error-content");
+const SUPPRESS_TRACING_KEY = createContextKey("OpenTelemetry SDK Context Key SUPPRESS_TRACING");
+
+export function withErrorContent(context: Context, allowed: boolean): Context {
+  return context.setValue(ERROR_CONTENT_KEY, allowed);
+}
+
+export function capturesErrorContent(): boolean {
+  return context.active().getValue(ERROR_CONTENT_KEY) !== false;
+}
+
+function suppressTracing(context: Context): Context {
+  return context.setValue(SUPPRESS_TRACING_KEY, true);
+}
 
 export function activeTraceOperation(
   host: Context = context.active(),

@@ -6,7 +6,7 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { createTraceRecorder } from "#tracing/lib/core/recorder.js";
 import { durableOtelBackend } from "#tracing/lib/adapters/otel.js";
-import { aiSdkContentSerializer } from "#tracing/lib/adapters/serializer.js";
+import { aiSdkContentSerializer } from "#tracing/lib/adapters/serialization.js";
 import { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
 import { eveOutputMapping } from "#tracing/eve/profile.js";
 import { context } from "@opentelemetry/api";

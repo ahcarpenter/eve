@@ -1,6 +1,6 @@
 import { SpanStatusCode, type Span } from "#compiled/@opentelemetry/api/index.js";
-import { boundedTraceError } from "#tracing/bounded-error.js";
-import { truncateTelemetryText } from "#tracing/telemetry-budget.js";
+import { boundedTraceError } from "#tracing/lib/adapters/serialization.js";
+import { truncateTelemetryText } from "#tracing/lib/adapters/serialization.js";
 import { contentAttribute, textContentAttribute } from "#tracing/lib/adapters/serialization.js";
 
 /** Call with policy-projected errors; undefined retains failure status without content. */

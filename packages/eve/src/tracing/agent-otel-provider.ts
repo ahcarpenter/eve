@@ -41,7 +41,7 @@ import {
 } from "#tracing/agent-otel-usage.js";
 import { createAgentOtelSessionContext } from "#tracing/agent-otel-session-context.js";
 import type { TraceCapturePolicy } from "#tracing/otel-declaration.js";
-import { isSampledTrace, resolveTracePolicyDecision } from "#tracing/sampled-trace.js";
+import { isSampledTrace, resolveTracePolicyDecision } from "#shared/trace-policy.js";
 import {
   applyLiveDeliveryAudienceCeiling,
   resolveForwardedTraceSeed,
@@ -67,13 +67,11 @@ import type {
   InstrumentationTurnTerminalEvent,
 } from "#instrumentation/lifecycle.js";
 import { attemptIdempotencyKey } from "#instrumentation/lifecycle.js";
-import {
-  AGENT_SPAN_NAMES,
-  agentInvocationSpanName,
-  modelSpanName,
-  type AgentSamplingOperation,
-} from "#tracing/agent-span-contract.js";
-import { withErrorContent } from "#tracing/error-content-context.js";
+import { SPAN_NAMES as AGENT_SPAN_NAMES } from "#tracing/lib/core/contract.js";
+import { invocationName as agentInvocationSpanName } from "#tracing/lib/core/contract.js";
+import { modelName as modelSpanName } from "#tracing/lib/core/contract.js";
+import { type SamplingOperation as AgentSamplingOperation } from "#tracing/lib/adapters/otel-registration.js";
+import { withErrorContent } from "#tracing/lib/adapters/otel.js";
 import { withAgentToolContentPolicy } from "#tracing/agent-tool-span-context.js";
 import { recordAgentSpanError as recordError } from "#tracing/agent-span-error.js";
 import { resolveInstrumentationEnvironment } from "#internal/application/dev-environment.js";
