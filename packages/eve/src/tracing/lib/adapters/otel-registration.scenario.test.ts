@@ -14,7 +14,7 @@ import {
   metrics as runtimeMetrics,
   trace as runtimeTrace,
 } from "#compiled/@opentelemetry/api/index.js";
-import { registerOtelPipeline } from "#tracing/otel-registration.js";
+import { registerOtelPipeline } from "#tracing/lib/adapters/otel-registration.js";
 import { withErrorContent } from "#tracing/error-content-context.js";
 import { createLogger, logError } from "#internal/logging.js";
 
@@ -36,7 +36,7 @@ afterEach(() => {
   (runtimeTrace as typeof runtimeTrace & { disable(): void }).disable();
 });
 
-describe("registerOtelPipeline", () => {
+describe("OTel registration", () => {
   it("samples using the real activation name and attributes without exporting probes", async () => {
     const exporter = new InMemorySpanExporter();
     const sampler = {
@@ -55,7 +55,7 @@ describe("registerOtelPipeline", () => {
       toString: () => "activation-sampler",
     };
     const runtime = registerOtelPipeline({
-      pipeline: { sampler, spanProcessors: [new SimpleSpanProcessor(exporter)] },
+      otel: { sampler, spanProcessors: [new SimpleSpanProcessor(exporter)] },
       serviceName: "researcher",
     });
     const operation = {
@@ -83,7 +83,7 @@ describe("registerOtelPipeline", () => {
     async (sampler) => {
       vi.stubEnv("OTEL_TRACES_SAMPLER_ARG", "0");
       const runtime = registerOtelPipeline({
-        pipeline: { sampler, spanProcessors: [] },
+        otel: { sampler, spanProcessors: [] },
         serviceName: "test",
       });
       expect(runtime.samplesTrace("a".repeat(32), { name: "invoke_agent test" })).toBe(false);
@@ -95,7 +95,7 @@ describe("registerOtelPipeline", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const exporter = new InMemorySpanExporter();
     const runtime = registerOtelPipeline({
-      pipeline: { spanProcessors: [new SimpleSpanProcessor(exporter)] },
+      otel: { spanProcessors: [new SimpleSpanProcessor(exporter)] },
       serviceName: "test",
     });
     for (const allowed of [false, true]) {
@@ -123,7 +123,7 @@ describe("registerOtelPipeline", () => {
     const exporter = new InMemorySpanExporter();
     const processor = new SimpleSpanProcessor(exporter);
     const runtime = registerOtelPipeline({
-      pipeline: { spanProcessors: [processor] },
+      otel: { spanProcessors: [processor] },
       serviceName: "weather",
     });
     const parent = runtimeTrace.getTracer("eve").startSpan("eve.parent");
@@ -150,7 +150,7 @@ describe("registerOtelPipeline", () => {
   it("verifies tracer ownership when the sampler records nothing", () => {
     expect(() =>
       registerOtelPipeline({
-        pipeline: { sampler: "always_off", spanProcessors: [] },
+        otel: { sampler: "always_off", spanProcessors: [] },
         serviceName: "weather",
       }),
     ).not.toThrow();
@@ -158,7 +158,7 @@ describe("registerOtelPipeline", () => {
 
   it("reports the installed sampler's verdict for pre-allocated trace ids", () => {
     const runtime = registerOtelPipeline({
-      pipeline: { sampler: "always_off", spanProcessors: [] },
+      otel: { sampler: "always_off", spanProcessors: [] },
       serviceName: "weather",
     });
 
@@ -167,18 +167,17 @@ describe("registerOtelPipeline", () => {
 
   it("passes the pre-allocated trace id to a custom sampler without exporting the probe", async () => {
     const seen: string[] = [];
-    const sampler: NonNullable<Parameters<typeof registerOtelPipeline>[0]["pipeline"]["sampler"]> =
-      {
-        shouldSample: (_context: unknown, traceId: string) => {
-          seen.push(traceId);
-          return { decision: traceId.startsWith("a") ? 2 : 0 };
-        },
-        toString: () => "test-sampler",
-      };
+    const sampler: NonNullable<Parameters<typeof registerOtelPipeline>[0]["otel"]["sampler"]> = {
+      shouldSample: (_context: unknown, traceId: string) => {
+        seen.push(traceId);
+        return { decision: traceId.startsWith("a") ? 2 : 0 };
+      },
+      toString: () => "test-sampler",
+    };
     const exporter = new InMemorySpanExporter();
     const processor = new SimpleSpanProcessor(exporter);
     const runtime = registerOtelPipeline({
-      pipeline: {
+      otel: {
         sampler,
         spanProcessors: [processor],
       },
@@ -210,7 +209,7 @@ describe("registerOtelPipeline", () => {
 
     expect(() =>
       registerOtelPipeline({
-        pipeline: {
+        otel: {
           spanProcessors: [
             { forceFlush: async () => {}, onEnd: () => {}, onStart: () => {}, shutdown },
           ],
@@ -239,7 +238,7 @@ describe("registerOtelPipeline", () => {
 
     expect(() =>
       registerOtelPipeline({
-        pipeline: { spanProcessors: [] },
+        otel: { spanProcessors: [] },
         serviceName: "weather",
       }),
     ).toThrow(/another runtime already owns the global tracer provider/u);
@@ -263,7 +262,7 @@ describe("registerOtelPipeline", () => {
       shutdown: vi.fn(async () => {}),
     };
     const runtime = registerOtelPipeline({
-      pipeline: { metricReaders: [reader], spanProcessors: [] },
+      otel: { metricReaders: [reader], spanProcessors: [] },
       serviceName: "weather",
     });
 
@@ -284,7 +283,7 @@ describe("registerOtelPipeline", () => {
       setTracerProvider: vi.fn(),
     };
     const runtime = registerOtelPipeline({
-      pipeline: { instrumentations: [instrumentation], spanProcessors: [] },
+      otel: { instrumentations: [instrumentation], spanProcessors: [] },
       serviceName: "weather",
     });
     expect(instrumentation.enable).toHaveBeenCalledOnce();
@@ -299,7 +298,7 @@ describe("registerOtelPipeline", () => {
     const processor = new SimpleSpanProcessor(exporter);
     const shutdown = vi.spyOn(processor, "shutdown");
     const runtime = registerOtelPipeline({
-      pipeline: { spanProcessors: [processor] },
+      otel: { spanProcessors: [processor] },
       serviceName: "weather",
     });
 

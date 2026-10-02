@@ -18,7 +18,10 @@ import { ContextAgentTraceStateStore } from "#tracing/agent-trace-context-store.
 import { createAgentOtelInstrumentation } from "#tracing/agent-otel-provider.js";
 import { hasConversationRelease, type LocalTracesProcessor } from "#tracing/local-traces.js";
 import type { CollectedOtel, RuntimeContextResolver } from "#tracing/otel-declaration.js";
-import { registerOtelPipeline, type RegisteredOtelPipeline } from "#tracing/otel-registration.js";
+import {
+  registerOtelPipeline,
+  type RegisteredOtelPipeline,
+} from "#tracing/lib/adapters/otel-registration.js";
 import { readConversationId } from "#shared/conversation-identity.js";
 
 const log = createLogger("tracing.install-instrumentation-runtime");
@@ -48,7 +51,7 @@ export function installInstrumentationRuntime(input: {
 
   if (input.collected.declared) {
     otelRuntime = registerOtelPipeline({
-      pipeline: input.collected.pipeline,
+      otel: input.collected.pipeline,
       serviceName: input.serviceName,
     });
     const agentOtel = createAgentOtelInstrumentation({

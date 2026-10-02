@@ -12,8 +12,9 @@ const { forceFlush, internalTerminalState, shutdown } = vi.hoisted(() => ({
   shutdown: vi.fn(async () => undefined),
 }));
 
-vi.mock("#tracing/otel-registration.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("#tracing/otel-registration.js")>();
+vi.mock("#tracing/lib/adapters/otel-registration.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("#tracing/lib/adapters/otel-registration.js")>();
   return {
     ...actual,
     registerOtelPipeline: () => ({

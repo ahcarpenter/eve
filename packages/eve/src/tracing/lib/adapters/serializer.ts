@@ -11,7 +11,10 @@ import type { ContentSerializer } from "#tracing/lib/core/model.js";
 export const aiSdkContentSerializer: ContentSerializer = {
   json: contentAttribute,
   text: textContentAttribute,
-  inputMessages: genAiInputMessagesAttribute,
+  inputMessages: (messages) =>
+    genAiInputMessagesAttribute(messages, (value) =>
+      typeof value === "string" ? value : undefined,
+    ),
   instructions: genAiSystemInstructionsAttribute,
   outputMessages: genAiOutputMessagesAttribute,
   toolResults: toolResultsContentAttribute,

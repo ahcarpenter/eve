@@ -2,10 +2,7 @@ import { JsonTraceSerializer } from "#compiled/@opentelemetry/otlp-transformer/i
 import { TraceFlags } from "#compiled/@opentelemetry/api/index.js";
 import type { SpanExporter, SpanProcessor } from "#compiled/@vercel/otel/index.js";
 
-import { createLogger, formatError } from "#internal/logging.js";
-
 const VERCEL_REQUEST_CONTEXT = Symbol.for("@vercel/request-context");
-const log = createLogger("tracing.vercel-runtime-span-exporter");
 
 interface VercelRequestContextReader {
   get():
@@ -46,7 +43,7 @@ export function vercelRuntimeSpanExporter(): SpanExporter {
 }
 
 /** Reports immediately so the span stays attached to its request context. */
-export function vercelRuntimeSpanProcessor(): SpanProcessor {
+export function vercelRuntimeSpanProcessor(diagnostic?: (code: string) => void): SpanProcessor {
   const exporter = vercelRuntimeSpanExporter();
   let stopped = false;
   return {
@@ -55,9 +52,9 @@ export function vercelRuntimeSpanProcessor(): SpanProcessor {
       if (stopped || !isSampled(span)) return;
       exporter.export([span], (result) => {
         if (result.code !== 0) {
-          log.warn("Agent Runs export failed", {
-            error: formatError(result.error ?? new Error("Span export failed.")),
-          });
+          try {
+            diagnostic?.("agent.tracing.vercel.export.failed");
+          } catch {}
         }
       });
     },

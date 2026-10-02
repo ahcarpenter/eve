@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { registerOtelPipeline } from "#tracing/otel-registration.js";
+import { registerOtelPipeline } from "#tracing/lib/adapters/otel-registration.js";
 
 const { registerOTel } = vi.hoisted(() => ({ registerOTel: vi.fn() }));
 
 vi.mock("#compiled/@vercel/otel/index.js", () => ({ registerOTel }));
 
-describe("registerOtelPipeline", () => {
+describe("OTel registration", () => {
   beforeEach(() => {
     delete (globalThis as Record<symbol, unknown>)[Symbol.for("eve.otel.replay-deduplication")];
   });
@@ -16,7 +16,7 @@ describe("registerOtelPipeline", () => {
 
     expect(() =>
       registerOtelPipeline({
-        pipeline: {
+        otel: {
           propagators: ["tracecontext"],
           resource: { "service.version": "abc" },
           sampler: "always_on",
@@ -42,7 +42,7 @@ describe("registerOtelPipeline", () => {
     registerOTel.mockImplementation(() => undefined);
 
     expect(() =>
-      registerOtelPipeline({ pipeline: { spanProcessors: [] }, serviceName: "weather" }),
+      registerOtelPipeline({ otel: { spanProcessors: [] }, serviceName: "weather" }),
     ).toThrow(/already owns the global tracer provider/u);
 
     const configuration = registerOTel.mock.calls.at(-1)?.[0] as Record<string, unknown>;
@@ -62,7 +62,7 @@ describe("registerOtelPipeline", () => {
 
     expect(() =>
       registerOtelPipeline({
-        pipeline: { spanProcessors: [downstream] },
+        otel: { spanProcessors: [downstream] },
         serviceName: "weather",
       }),
     ).toThrow();
@@ -87,7 +87,7 @@ describe("registerOtelPipeline", () => {
     registerOTel.mockImplementation(() => undefined);
 
     expect(() =>
-      registerOtelPipeline({ pipeline: { spanProcessors: ["auto"] }, serviceName: "weather" }),
+      registerOtelPipeline({ otel: { spanProcessors: ["auto"] }, serviceName: "weather" }),
     ).toThrow();
 
     const configuration = registerOTel.mock.calls.at(-1)?.[0] as {
@@ -113,7 +113,7 @@ describe("registerOtelPipeline", () => {
 
     expect(() =>
       registerOtelPipeline({
-        pipeline: { spanProcessors: [first, second] },
+        otel: { spanProcessors: [first, second] },
         serviceName: "weather",
       }),
     ).toThrow();
@@ -153,7 +153,7 @@ describe("registerOtelPipeline", () => {
     registerOTel.mockImplementation(() => undefined);
     expect(() =>
       registerOtelPipeline({
-        pipeline: { spanProcessors: [downstream] },
+        otel: { spanProcessors: [downstream] },
         serviceName: "weather",
       }),
     ).toThrow();
@@ -180,7 +180,7 @@ describe("registerOtelPipeline", () => {
     registerOTel.mockImplementation(() => undefined);
 
     expect(() =>
-      registerOtelPipeline({ pipeline: { spanProcessors: [] }, serviceName: "weather" }),
+      registerOtelPipeline({ otel: { spanProcessors: [] }, serviceName: "weather" }),
     ).toThrow(/another runtime already owns/u);
   });
 
@@ -261,7 +261,7 @@ function filteringProcessor() {
   registerOTel.mockImplementation(() => undefined);
   expect(() =>
     registerOtelPipeline({
-      pipeline: { spanProcessors: [downstream] },
+      otel: { spanProcessors: [downstream] },
       serviceName: "weather",
     }),
   ).toThrow();
