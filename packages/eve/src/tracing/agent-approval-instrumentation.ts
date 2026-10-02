@@ -15,7 +15,7 @@ import type { AgentActionContext } from "#tracing/agent-action-instrumentation.j
 import type { AgentSpanIdGenerator } from "#tracing/adapters/otel-ids.js";
 import { normalizeChannelAudience, type ChannelAudience } from "#shared/channel-audience.js";
 import { eveScopeRecord, checkpointContent } from "#tracing/adapters/eve/checkpointer.js";
-import type { AgentTracing } from "#tracing/core/agent-tracing.js";
+import type { createTraceRecorder } from "#tracing/core/recorder.js";
 
 interface AgentApprovalSpanState {
   readonly traceSessionId: string;
@@ -35,7 +35,7 @@ interface AgentApprovalSpanState {
 
 /** Builds durable approval wait spans under their originating runtime action. */
 export function createAgentApprovalInstrumentation(input: {
-  readonly lifecycle: AgentTracing["lifecycle"];
+  readonly lifecycle: ReturnType<typeof createTraceRecorder>;
   readonly actionContextFor: (
     sessionId: string,
     turnId: string,
@@ -118,12 +118,18 @@ export function createAgentApprovalInstrumentation(input: {
       ),
       { deferred: true, executionContext: parent },
     );
-    await runtime.finish({
-      outcome: event.outcome,
-      response: event.response,
-      failed: event.outcome === "failed",
-      error: event.error,
-    });
+    await runtime?.complete(
+      event.outcome === "failed"
+        ? {
+            outcome: "failed",
+            errorType: event.error instanceof Error ? event.error.name : "_OTHER",
+            error: event.error,
+          }
+        : {
+            outcome: event.outcome as "approved" | "denied" | "cancelled" | "ignored" | "invalid",
+            response: event.response,
+          },
+    );
   };
 
   return {

@@ -30,11 +30,11 @@ import { traceSessionIdOf } from "#tracing/adapters/eve/checkpointer.js";
 import { ROOT_CONTEXT } from "#compiled/@opentelemetry/api/index.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
 import type { TraceLink } from "#tracing/core/types.js";
-import type { AgentTracing } from "#tracing/core/agent-tracing.js";
+import type { createTraceRecorder } from "#tracing/core/recorder.js";
 import { accumulateUsage } from "#tracing/core/usage.js";
 
 interface EveSessionTracingInput {
-  readonly lifecycle: AgentTracing["lifecycle"];
+  readonly lifecycle: ReturnType<typeof createTraceRecorder>;
   readonly environment: ConversationEnvironment;
   readonly frameworkVersion: string;
   readonly idGenerator: AgentSpanIdGenerator;
@@ -200,19 +200,19 @@ export function createEveSessionTracing(input: EveSessionTracingInput): EveSessi
             executionContext: withChannelAudience(ROOT_CONTEXT, session?.channelAudience),
           },
         );
-        await runtime.finish({
-          usage: turn.modelUsage,
-          outcome:
-            turn.terminal === undefined
-              ? undefined
-              : turn.terminal.type === "turn.completed"
-                ? "completed"
-                : turn.terminal.type === "turn.cancelled"
-                  ? "cancelled"
-                  : "failed",
-          failed: turn.terminal?.type === "turn.failed",
-          error: turn.terminal?.type === "turn.failed" ? turn.terminal.error : undefined,
-        });
+        await runtime?.complete(
+          turn.terminal?.type === "turn.failed"
+            ? {
+                outcome: "failed",
+                errorType:
+                  turn.terminal.error instanceof Error ? turn.terminal.error.name : "_OTHER",
+                error: turn.terminal.error,
+              }
+            : {
+                outcome: turn.terminal?.type === "turn.cancelled" ? "cancelled" : "completed",
+                usage: turn.modelUsage,
+              },
+        );
       }
       await input.stateStore.deleteTurn(event.sessionId, event.turnId);
     },

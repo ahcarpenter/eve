@@ -25,11 +25,10 @@ object exposes turn execution and SDK telemetry, not reservation or restoration.
 `createTraceRecorder` supplies operation-specific handles with discriminated
 completion outcomes. No second prepared-span durable driver remains.
 
-Implementation boundary still pending: eve uses the private generic runtime
-binding during adoption. The full conversion to typed recorder handles, corrupt
-snapshot recovery, and recorder-owned tool correlation must precede public release.
-The API sketches below record earlier proposals and require replacement before
-the design is accepted.
+eve now uses typed recorder handles, corrupt-snapshot recovery, and
+recorder-owned tool correlation. The historical sketches below describe the
+earlier API; the current internal contract is documented in
+[the library guide](../packages/eve/src/tracing/core/README.md).
 
 Extract one neutral trace engine. Use the engine in eve before a public release.
 Add an AI SDK adapter for agents that do not use eve.

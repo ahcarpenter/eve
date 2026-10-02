@@ -19,10 +19,10 @@ import { withChannelAudience } from "#tracing/channel-audience-context.js";
 import { isSampledTrace } from "#tracing/sampled-trace.js";
 import type { ConversationEnvironment } from "#shared/conversation-context.js";
 import { eveScopeRecord } from "#tracing/adapters/eve/checkpointer.js";
-import type { RuntimeScope } from "#tracing/core/scopes.js";
-import type { AgentTracing } from "#tracing/core/agent-tracing.js";
+import type { MemoryOperation } from "#tracing/core/operations.js";
+import type { createTraceRecorder } from "#tracing/core/recorder.js";
 
-type SpanState = { readonly runtime: RuntimeScope; readonly context: Context };
+type SpanState = { readonly runtime: MemoryOperation; readonly context: Context };
 
 interface AgentMemoryInstrumentation {
   readonly events: Pick<
@@ -36,7 +36,7 @@ interface AgentMemoryInstrumentation {
 }
 
 export function createAgentMemoryInstrumentation(input: {
-  readonly lifecycle: AgentTracing["lifecycle"];
+  readonly lifecycle: ReturnType<typeof createTraceRecorder>;
   readonly idGenerator: import("#tracing/adapters/otel-ids.js").AgentSpanIdGenerator;
   readonly environment: ConversationEnvironment;
   readonly recordOutputs?: boolean;
@@ -91,6 +91,7 @@ export function createAgentMemoryInstrumentation(input: {
       ),
       { executionContext: parent },
     );
+    if (runtime === undefined) return;
     spans.set(event.idempotencyKey, {
       context: trace.setSpan(parent, trace.wrapSpanContext(runtime.reference)),
       runtime,
@@ -101,10 +102,14 @@ export function createAgentMemoryInstrumentation(input: {
     const state = spans.get(event.idempotencyKey);
     if (state === undefined) return;
     spans.delete(event.idempotencyKey);
-    await state.runtime.finish(
+    await state.runtime.complete(
       event.type === "memory.operation.failed"
-        ? { failed: true, error: event.error }
-        : { recordCount: event.recordCount, records: event.outputRecords },
+        ? {
+            outcome: "failed",
+            errorType: event.error instanceof Error ? event.error.name : "_OTHER",
+            error: event.error,
+          }
+        : { outcome: "completed", recordCount: event.recordCount, records: event.outputRecords },
     );
   };
 

@@ -20,8 +20,8 @@ import { normalizeChannelAudience } from "#shared/channel-audience.js";
 import { isSampledTrace } from "#shared/trace-policy.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
 import { eveScopeRecord, checkpointContent } from "#tracing/adapters/eve/checkpointer.js";
-import type { RuntimeScope } from "#tracing/core/scopes.js";
-import type { AgentTracing } from "#tracing/core/agent-tracing.js";
+import type { ActionOperation } from "#tracing/core/operations.js";
+import type { createTraceRecorder } from "#tracing/core/recorder.js";
 
 interface AgentActionInstrumentation {
   readonly events: Pick<
@@ -44,7 +44,7 @@ export interface AgentActionContext {
 
 /** Builds durable `agent.action` spans around eve's runtime dispatch boundary. */
 export function createAgentActionInstrumentation(input: {
-  readonly lifecycle: AgentTracing["lifecycle"];
+  readonly lifecycle: ReturnType<typeof createTraceRecorder>;
   readonly frameworkVersion: string;
   readonly idGenerator: AgentSpanIdGenerator;
   readonly recordInputs: boolean;
@@ -107,7 +107,7 @@ export function createAgentActionInstrumentation(input: {
     }
   };
 
-  const startScope = (state: AgentActionTraceState): Promise<RuntimeScope> =>
+  const startScope = (state: AgentActionTraceState): Promise<ActionOperation | undefined> =>
     input.lifecycle.resolve(
       eveScopeRecord(
         {
@@ -150,7 +150,11 @@ export function createAgentActionInstrumentation(input: {
         const state = await input.stateStore.getAction(key);
         if (state === undefined) continue;
         const scope = await startScope(state);
-        await scope.finish({ failed: true, error });
+        await scope?.complete({
+          outcome: "failed",
+          errorType: error instanceof Error ? error.name : "_OTHER",
+          error,
+        });
         await input.stateStore.deleteAction(key);
       }
     },
@@ -180,16 +184,23 @@ export function createAgentActionInstrumentation(input: {
           ? event.output.error
           : undefined;
     const failed = event.type === "action.failed" || event.output.type === "error";
-    await scope.finish({
-      outcome: event.outcome,
-      failed,
-      error,
-      errorCode: event.type === "action.failed" ? event.errorCode : undefined,
+    await scope?.complete({
+      ...(failed
+        ? {
+            outcome: "failed" as const,
+            errorType: event.type === "action.failed" ? (event.errorCode ?? "Error") : "Error",
+            error,
+          }
+        : {
+            outcome: "completed" as const,
+            output:
+              input.recordOutputs &&
+              event.type === "action.completed" &&
+              event.output.type === "result"
+                ? event.output.output
+                : undefined,
+          }),
       usage: event.usage,
-      output:
-        input.recordOutputs && event.type === "action.completed" && event.output.type === "result"
-          ? event.output.output
-          : undefined,
       endTimeMs: event.acceptedAtMs,
     });
   }

@@ -41,9 +41,9 @@ import { resolveInstrumentationEnvironment } from "#internal/application/dev-env
 import type { ConversationEnvironment } from "#shared/conversation-context.js";
 import { createEveTraceLifecycle } from "#tracing/adapters/eve/scopes.js";
 import { eveScopeRecord } from "#tracing/adapters/eve/checkpointer.js";
-import type { RuntimeScope } from "#tracing/core/scopes.js";
+import type { AttemptOperation, ModelOperation } from "#tracing/core/operations.js";
 
-type SpanState = { readonly runtime: RuntimeScope; readonly context: Context };
+type SpanState<T = AttemptOperation> = { readonly runtime: T; readonly context: Context };
 
 export interface AgentOtelInstrumentationInput {
   readonly environment?: ConversationEnvironment;
@@ -82,7 +82,10 @@ export function createAgentOtelInstrumentation(
   const attemptScopes = new Map<string, InstrumentationAttemptScope>();
   // A lost serverless worker retries the whole turn step from entry.
   const steps = new WeakMap<InstrumentationAttemptScope, SpanState>();
-  const modelSpans = new WeakMap<InstrumentationAttemptScope, Map<string, SpanState>>();
+  const modelSpans = new WeakMap<
+    InstrumentationAttemptScope,
+    Map<string, SpanState<ModelOperation>>
+  >();
   const actions = createAgentActionInstrumentation({
     lifecycle,
     frameworkVersion: input.frameworkVersion,
@@ -182,6 +185,7 @@ export function createAgentOtelInstrumentation(
       ),
       { executionContext: turnContext },
     );
+    if (runtime === undefined) return;
     const stepContext = trace.setSpan(turnContext, trace.wrapSpanContext(runtime.reference));
     steps.set(event.scope, { runtime, context: stepContext });
     attemptScopes.set(event.scope.attemptId, event.scope);
@@ -200,10 +204,15 @@ export function createAgentOtelInstrumentation(
     attemptScopes.delete(event.scope.attemptId);
     const attempt = steps.get(scope);
     if (attempt === undefined) return;
-    await attempt.runtime.finish({
-      failed: event.type === "step.attempt.failed",
-      error: event.type === "step.attempt.failed" ? event.error : undefined,
-    });
+    await attempt.runtime.complete(
+      event.type === "step.attempt.failed"
+        ? {
+            outcome: "failed",
+            errorType: event.error instanceof Error ? event.error.name : "_OTHER",
+            error: event.error,
+          }
+        : { outcome: "completed" },
+    );
     steps.delete(scope);
   };
 
@@ -223,8 +232,7 @@ export function createAgentOtelInstrumentation(
   const onModelCallStarted = async (event: InstrumentationModelCallStartedEvent): Promise<void> => {
     const attempt = steps.get(event.scope);
     if (attempt === undefined) return;
-    attempt.runtime.modelSelected(event.model.modelId, event.model.provider);
-    const runtime = await attempt.runtime.model(
+    const runtime = await attempt.runtime.modelCall(
       {
         provider: event.model.provider,
         modelId: event.model.modelId,
@@ -232,7 +240,7 @@ export function createAgentOtelInstrumentation(
         instructions: recordInputs ? event.input?.instructions : undefined,
         runtimeContext: event.runtimeContext,
       },
-      { key: event.idempotencyKey, executionContext: attempt.context },
+      event.idempotencyKey,
     );
     const state = {
       runtime,
@@ -247,11 +255,16 @@ export function createAgentOtelInstrumentation(
     const state = takeSpanState(modelSpans, event.scope, event.idempotencyKey);
     if (state === undefined) return;
     if (event.type === "model.call.failed") {
-      await state.runtime.finish({ failed: true, error: event.error });
+      await state.runtime.complete({
+        outcome: "failed",
+        errorType: event.error instanceof Error ? event.error.name : "_OTHER",
+        error: event.error,
+      });
     } else {
       await sessionTracing.recordModelUsage(event.scope.sessionId, event.scope.turnId, event.usage);
-      await state.runtime.finish({
-        model: { ...event, content: recordOutputs ? event.content : undefined },
+      await state.runtime.complete({
+        outcome: "completed",
+        result: { ...event, content: recordOutputs ? event.content : undefined },
       });
     }
   };
@@ -338,10 +351,15 @@ export function createAgentOtelInstrumentation(
 
   async function drainOpenSpans(event: InstrumentationStepAttemptTerminalEvent): Promise<void> {
     for (const state of modelSpans.get(event.scope)?.values() ?? []) {
-      await state.runtime.finish({
-        failed: event.type === "step.attempt.failed",
-        error: event.type === "step.attempt.failed" ? event.error : undefined,
-      });
+      await state.runtime.complete(
+        event.type === "step.attempt.failed"
+          ? {
+              outcome: "failed",
+              errorType: event.error instanceof Error ? event.error.name : "_OTHER",
+              error: event.error,
+            }
+          : { outcome: "completed", result: { finishReason: "unknown", usage: {} } },
+      );
     }
     modelSpans.delete(event.scope);
   }

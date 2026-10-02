@@ -1,4 +1,4 @@
-import { type Context, type SpanContext } from "#compiled/@opentelemetry/api/index.js";
+import type { Context, SpanContext } from "#compiled/@opentelemetry/api/index.js";
 import type {
   InstrumentationActionStartedEvent,
   InstrumentationToolCallStartedEvent,
@@ -8,17 +8,10 @@ import { actionIdempotencyKey } from "#instrumentation/lifecycle.js";
 import type { AgentActionContext } from "#tracing/agent-action-instrumentation.js";
 import { resolveConversationId } from "#shared/conversation-identity.js";
 import { traceSessionIdOf } from "#tracing/adapters/eve/checkpointer.js";
-import type { AgentTracing } from "#tracing/core/agent-tracing.js";
-
-type PendingTool = ReturnType<AgentTracing["lifecycle"]["toolCall"]>;
-interface ToolState {
-  readonly actionKey: string;
-  readonly event: InstrumentationToolCallStartedEvent;
-  readonly operation: PendingTool;
-}
+import type { createTraceRecorder } from "#tracing/core/recorder.js";
 
 export function createAgentToolInstrumentation(input: {
-  readonly lifecycle: AgentTracing["lifecycle"];
+  readonly lifecycle: ReturnType<typeof createTraceRecorder>;
   readonly actionContextFor: (
     sessionId: string,
     turnId: string,
@@ -28,101 +21,80 @@ export function createAgentToolInstrumentation(input: {
   readonly recordOutputs: boolean;
   readonly resolveFallback: (
     event: InstrumentationToolCallStartedEvent,
-  ) => { readonly context: Context; readonly spanContext: SpanContext } | undefined;
+  ) => { context: Context; spanContext: SpanContext } | undefined;
 }) {
-  const byAction = new Map<string, ToolState>();
-  const byAttempt = new Map<string, Map<string, ToolState>>();
-  async function attach(state: ToolState) {
-    const event = state.event;
+  async function actionAvailable(event: {
+    scope: InstrumentationToolCallStartedEvent["scope"];
+    callId: string;
+  }) {
     const parent = await input.actionContextFor(
       event.scope.sessionId,
       event.scope.turnId,
       event.callId,
     );
-    if (parent !== undefined) await state.operation.attach(parent.spanContext, parent.context);
-  }
-  function forget(state: ToolState) {
-    byAction.delete(state.actionKey);
-    const states = byAttempt.get(state.event.scope.attemptId);
-    states?.delete(state.event.idempotencyKey);
-    if (states?.size === 0) byAttempt.delete(state.event.scope.attemptId);
+    if (parent !== undefined)
+      await input.lifecycle.actionAvailable(
+        actionIdempotencyKey(event.scope.sessionId, event.scope.turnId, event.callId),
+        parent.spanContext,
+        parent.context,
+      );
   }
   async function onStarted(event: InstrumentationToolCallStartedEvent) {
     const fallback =
       input.resolveFallback(event) ??
       (await input.actionContextFor(event.scope.sessionId, event.scope.turnId, event.callId));
     if (fallback === undefined) return;
-    const state: ToolState = {
+    input.lifecycle.toolCall({
+      identity: {
+        conversationId: resolveConversationId(event.scope.rootSessionId ?? event.scope.sessionId),
+        runId: event.scope.sessionId,
+        turnId: event.scope.turnId,
+        agentName: event.scope.functionId,
+        framework: { name: "eve", version: "" },
+      },
+      executionKey: event.idempotencyKey,
+      referenceKey: `tool:${event.idempotencyKey}`,
+      group: event.scope.attemptId,
       actionKey: actionIdempotencyKey(event.scope.sessionId, event.scope.turnId, event.callId),
-      event,
-      operation: input.lifecycle.toolCall({
-        identity: {
-          conversationId: resolveConversationId(event.scope.rootSessionId ?? event.scope.sessionId),
-          runId: event.scope.sessionId,
-          turnId: event.scope.turnId,
-          agentName: event.scope.functionId,
-          framework: { name: "eve", version: "" },
-        },
-        executionKey: `tool:${event.idempotencyKey}`,
-        actionKey: actionIdempotencyKey(event.scope.sessionId, event.scope.turnId, event.callId),
-        callId: event.callId,
-        name: event.toolName,
-        arguments: input.recordInputs ? event.input : undefined,
-        fallback: fallback.spanContext,
-        capture: {
-          emit: (fallback.spanContext.traceFlags & 1) !== 0,
-          recordInputs: input.recordInputs,
-          recordOutputs: input.recordOutputs,
-        },
-        executionContext: fallback.context,
-        outputContext: {
-          traceSessionId: traceSessionIdOf(event.scope),
-          platform: process.env.VERCEL_ENV === undefined ? "other" : "vercel",
-        },
-      }),
-    };
-    const states = byAttempt.get(event.scope.attemptId) ?? new Map<string, ToolState>();
-    states.set(event.idempotencyKey, state);
-    byAttempt.set(event.scope.attemptId, states);
-    byAction.set(state.actionKey, state);
-    await attach(state);
+      callId: event.callId,
+      name: event.toolName,
+      arguments: input.recordInputs ? event.input : undefined,
+      fallback: fallback.spanContext,
+      capture: {
+        emit: (fallback.spanContext.traceFlags & 1) !== 0,
+        recordInputs: input.recordInputs,
+        recordOutputs: input.recordOutputs,
+      },
+      executionContext: fallback.context,
+      outputContext: {
+        traceSessionId: traceSessionIdOf(event.scope),
+        platform: process.env.VERCEL_ENV === undefined ? "other" : "vercel",
+      },
+    });
+    await actionAvailable(event);
   }
   async function onTerminal(event: InstrumentationToolCallTerminalEvent) {
-    const state = byAttempt.get(event.scope.attemptId)?.get(event.idempotencyKey);
-    if (state === undefined) return;
-    await attach(state);
-    await state.operation.finish({
-      failed: event.type === "tool.call.failed" || event.output.type === "error",
-      error:
-        event.type === "tool.call.failed"
-          ? event.error
-          : event.output.type === "error"
-            ? event.output.error
-            : undefined,
-      output:
-        input.recordOutputs &&
-        event.type === "tool.call.completed" &&
-        event.output.type === "result"
-          ? event.output.output
-          : undefined,
-    });
-    if (state.operation.finished) forget(state);
+    await input.lifecycle.completeTool(
+      event.idempotencyKey,
+      event.type === "tool.call.failed" || event.output.type === "error"
+        ? {
+            outcome: "failed",
+            errorType: "Error",
+            error:
+              event.type === "tool.call.failed"
+                ? event.error
+                : event.output.type === "error"
+                  ? event.output.error
+                  : undefined,
+          }
+        : { outcome: "completed", output: input.recordOutputs ? event.output.output : undefined },
+    );
   }
   return {
-    async actionStarted(event: InstrumentationActionStartedEvent) {
-      const state = byAction.get(event.idempotencyKey);
-      if (state !== undefined) {
-        await attach(state);
-        if (state.operation.finished) forget(state);
-      }
-    },
-    operationFor: (attemptId: string, key: string) => byAttempt.get(attemptId)?.get(key)?.operation,
-    async drain(attemptId: string, failure?: { readonly error: unknown }) {
-      for (const state of byAttempt.get(attemptId)?.values() ?? []) {
-        await state.operation.drain({ failed: failure !== undefined, error: failure?.error });
-        forget(state);
-      }
-    },
+    actionStarted: (event: InstrumentationActionStartedEvent) => actionAvailable(event),
+    operationFor: (_attemptId: string, key: string) => input.lifecycle.toolExecution(key),
+    drain: (attemptId: string, failure?: { error: unknown }) =>
+      input.lifecycle.endAttempt(attemptId, failure),
     events: {
       "tool.call.started": onStarted,
       "tool.call.completed": onTerminal,

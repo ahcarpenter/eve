@@ -20,7 +20,7 @@ export function checkpointContent(value: string | undefined): unknown {
 }
 
 /** Converts existing workflow checkpoint records; does not create another state owner. */
-export function eveScopeRecord(
+export function eveScopeRecord<K extends ScopeData["type"]>(
   input: {
     readonly sessionId: string;
     readonly rootSessionId?: string;
@@ -38,8 +38,8 @@ export function eveScopeRecord(
     readonly content?: { readonly recordInputs: boolean; readonly recordOutputs: boolean };
   },
   key: string,
-  data: ScopeData,
-): ScopeRecord {
+  data: Extract<ScopeData, { type: K }>,
+): ScopeRecord & { data: Extract<ScopeData, { type: K }> } {
   return {
     key,
     data,
