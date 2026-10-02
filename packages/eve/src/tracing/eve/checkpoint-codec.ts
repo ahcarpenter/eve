@@ -1,6 +1,7 @@
 import type { ScopeData, ScopeRecord } from "#tracing/lib/core/scopes.js";
 import type { TraceLink, TraceReference } from "#tracing/lib/core/types.js";
 import { resolveConversationId } from "#shared/conversation-identity.js";
+import type { RuntimeOperationInput } from "#tracing/lib/core/recorder.js";
 export function traceSessionIdOf(scope: {
   readonly traceSessionId?: string;
   readonly rootSessionId?: string;
@@ -40,9 +41,29 @@ export function eveScopeRecord<K extends ScopeData["type"]>(
   key: string,
   data: Extract<ScopeData, { type: K }>,
 ): ScopeRecord & { data: Extract<ScopeData, { type: K }> } {
+  const operation = eveOperationInput(input, key);
   return {
     key,
     data,
+    identity: operation.identity,
+    capture: operation.capture,
+    reference: input.reference,
+    parent: input.parent,
+    startTimeMs: input.startTimeMs ?? Date.now(),
+    attempt: operation.attempt,
+    links: input.links,
+    content: input.content,
+    outputContext: operation.binding.outputContext,
+  };
+}
+
+export function eveOperationInput(
+  input: Parameters<typeof eveScopeRecord>[0],
+  key: string,
+  deferred = false,
+  executionContext?: import("#tracing/lib/core/types.js").ExecutionContext,
+): RuntimeOperationInput {
+  return {
     identity: {
       conversationId: resolveConversationId(input.rootSessionId ?? input.sessionId),
       runId: input.sessionId,
@@ -50,20 +71,25 @@ export function eveScopeRecord<K extends ScopeData["type"]>(
       agentName: input.agentName ?? input.functionId,
       framework: { name: "eve", version: input.frameworkVersion },
     },
-    reference: input.reference,
-    parent: input.parent,
-    startTimeMs: input.startTimeMs ?? Date.now(),
-    attempt: { index: input.stepIndex ?? 0, attempt: input.attemptIndex ?? 0 },
     capture: {
       emit: (input.reference.traceFlags & 1) !== 0,
       recordInputs: true,
       recordOutputs: true,
     },
-    links: input.links,
-    content: input.content,
-    outputContext: {
-      traceSessionId: traceSessionIdOf(input),
-      platform: process.env.VERCEL_ENV === undefined ? "other" : "vercel",
+    attempt: { index: input.stepIndex ?? 0, attempt: input.attemptIndex ?? 0 },
+    binding: {
+      key,
+      reference: input.reference,
+      parent: input.parent,
+      startTimeMs: input.startTimeMs,
+      links: input.links,
+      content: input.content,
+      deferred,
+      executionContext,
+      outputContext: {
+        traceSessionId: traceSessionIdOf(input),
+        platform: process.env.VERCEL_ENV === undefined ? "other" : "vercel",
+      },
     },
   };
 }

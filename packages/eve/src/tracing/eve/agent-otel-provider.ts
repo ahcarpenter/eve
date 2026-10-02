@@ -39,7 +39,7 @@ import { attemptIdempotencyKey } from "#instrumentation/lifecycle.js";
 import type { SamplingOperation as AgentSamplingOperation } from "#tracing/lib/adapters/otel-registration.js";
 import { resolveInstrumentationEnvironment } from "#internal/application/dev-environment.js";
 import type { ConversationEnvironment } from "#shared/conversation-context.js";
-import { eveScopeRecord } from "#tracing/eve/checkpoint-codec.js";
+import { eveOperationInput } from "#tracing/eve/checkpoint-codec.js";
 import type { AttemptOperation, ModelOperation } from "#tracing/lib/core/operations.js";
 import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
 import { isUserMessageKind } from "#harness/messages.js";
@@ -150,8 +150,8 @@ export function createAgentOtelInstrumentation(
       event.scope.channelAudience,
     );
     const activeSpanContext = trace.getSpan(context.active())?.spanContext();
-    const runtime = await lifecycle.resolve(
-      eveScopeRecord(
+    const runtime = await lifecycle.attempt({
+      ...eveOperationInput(
         {
           ...event.scope,
           frameworkVersion: input.frameworkVersion,
@@ -170,22 +170,16 @@ export function createAgentOtelInstrumentation(
               : [{ relationship: "execution.delivery", context: activeSpanContext }],
         },
         event.idempotencyKey,
-        {
-          type: "step",
-          options: {
-            index: event.scope.stepIndex,
-            attempt: event.scope.attemptIndex,
-            runtimeContext: event.runtimeContext,
-            channel: eveActivationMetadata({
-              session,
-              turn,
-              sessionId: event.scope.sessionId,
-            }).channel,
-          },
-        },
+        false,
+        turnContext,
       ),
-      { executionContext: turnContext },
-    );
+      step: {
+        index: event.scope.stepIndex,
+        attempt: event.scope.attemptIndex,
+        runtimeContext: event.runtimeContext,
+        channel: eveActivationMetadata({ session, turn, sessionId: event.scope.sessionId }).channel,
+      },
+    });
     if (runtime === undefined) return;
     const stepContext = trace.setSpan(turnContext, trace.wrapSpanContext(runtime.reference));
     steps.set(event.scope, { runtime, context: stepContext });

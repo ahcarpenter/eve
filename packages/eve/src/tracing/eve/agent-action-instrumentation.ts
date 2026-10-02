@@ -21,7 +21,11 @@ import type {
 import { normalizeChannelAudience } from "#shared/channel-audience.js";
 import { isSampledTrace } from "#shared/trace-policy.js";
 import { withChannelAudience } from "#tracing/eve/channel-audience-context.js";
-import { eveScopeRecord, checkpointContent } from "#tracing/eve/checkpoint-codec.js";
+import {
+  eveScopeRecord,
+  checkpointContent,
+  eveOperationInput,
+} from "#tracing/eve/checkpoint-codec.js";
 import type { ActionOperation } from "#tracing/lib/core/operations.js";
 import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
 
@@ -56,6 +60,7 @@ export function createAgentActionInstrumentation(input: {
   readonly stateStore: AgentTraceStateStore;
 }): AgentActionInstrumentation {
   const byAttempt = new Map<string, Set<string>>();
+  const live = new Map<string, ActionOperation>();
 
   const onStarted = async (event: InstrumentationActionStartedEvent): Promise<void> => {
     const traceContext = await input.resolveTraceContext(event);
@@ -89,6 +94,27 @@ export function createAgentActionInstrumentation(input: {
       turnId: event.scope.turnId,
     };
     await input.stateStore.setAction(event.idempotencyKey, state);
+    if (existing === undefined) {
+      const operation = await input.lifecycle.action({
+        ...eveOperationInput(
+          {
+            ...state,
+            frameworkVersion: input.frameworkVersion,
+            reference: { ...state.parent, spanId: state.spanId },
+          },
+          `${state.sessionId}:${state.callId}`,
+          true,
+          contextFromActionState(state),
+        ),
+        action: {
+          callId: state.callId,
+          kind: state.kind,
+          name: state.name,
+          arguments: checkpointContent(state.inputAttribute),
+        },
+      });
+      if (operation !== undefined) live.set(event.idempotencyKey, operation);
+    }
     if (event.isWorkflowTool === true) {
       await input.stateStore.setActionAnchor(event.idempotencyKey, state);
     }
@@ -104,6 +130,7 @@ export function createAgentActionInstrumentation(input: {
       await finishActionSpan(state, event);
     } finally {
       await input.stateStore.deleteAction(event.idempotencyKey);
+      live.delete(event.idempotencyKey);
       forget(event.idempotencyKey);
     }
   };
@@ -140,6 +167,10 @@ export function createAgentActionInstrumentation(input: {
       return state === undefined ? undefined : actionContext(state);
     },
     async deleteForSession(sessionId) {
+      for (const [key] of live) {
+        const state = await input.stateStore.getAction(key);
+        if (state?.sessionId === sessionId) live.delete(key);
+      }
       await input.stateStore.deleteActions(sessionId);
       await input.stateStore.deleteActionAnchors(sessionId);
     },
@@ -150,13 +181,14 @@ export function createAgentActionInstrumentation(input: {
       for (const key of keys) {
         const state = await input.stateStore.getAction(key);
         if (state === undefined) continue;
-        const scope = await startScope(state);
+        const scope = live.get(key) ?? (await startScope(state));
         await scope?.complete({
           outcome: "failed",
           errorType: error instanceof Error ? error.name : "_OTHER",
           error,
         });
         await input.stateStore.deleteAction(key);
+        live.delete(key);
       }
     },
     events: {
@@ -177,7 +209,7 @@ export function createAgentActionInstrumentation(input: {
     state: AgentActionTraceState,
     event: InstrumentationActionTerminalEvent,
   ): Promise<void> {
-    const scope = await startScope(state);
+    const scope = live.get(event.idempotencyKey) ?? (await startScope(state));
     const error =
       event.type === "action.failed"
         ? event.error

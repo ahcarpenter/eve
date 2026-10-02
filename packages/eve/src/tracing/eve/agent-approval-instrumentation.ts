@@ -13,7 +13,12 @@ import { decodeTraceSessionId } from "#tracing/eve/agent-trace-context-codec.js"
 import { withChannelAudience } from "#tracing/eve/channel-audience-context.js";
 import type { AgentActionContext } from "#tracing/eve/agent-action-instrumentation.js";
 import { normalizeChannelAudience, type ChannelAudience } from "#shared/channel-audience.js";
-import { eveScopeRecord, checkpointContent } from "#tracing/eve/checkpoint-codec.js";
+import {
+  eveScopeRecord,
+  checkpointContent,
+  eveOperationInput,
+} from "#tracing/eve/checkpoint-codec.js";
+import type { ApprovalOperation } from "#tracing/lib/core/operations.js";
 import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
 
 interface AgentApprovalSpanState {
@@ -45,6 +50,7 @@ export function createAgentApprovalInstrumentation(input: {
   NonNullable<InstrumentationProviderDefinition["events"]>,
   "input.requested" | "input.resolved"
 > {
+  const live = new Map<string, ApprovalOperation>();
   const onRequested = async (
     event: InstrumentationInputRequestedEvent,
     ctx: InstrumentationHandlerContext,
@@ -77,6 +83,27 @@ export function createAgentApprovalInstrumentation(input: {
     const requestAttribute = contentAttribute(event.request);
     if (requestAttribute !== undefined) state["requestAttribute"] = requestAttribute;
     ctx.state.set(state);
+    const saved = readState(state)!;
+    const reference = input.lifecycle.reserve({
+      key: `approval:${event.idempotencyKey}`,
+      parent: saved.parent,
+      traceFlags: saved.parent.traceFlags,
+    });
+    const operation = await input.lifecycle.approval({
+      ...eveOperationInput(
+        { ...saved, frameworkVersion: input.frameworkVersion, reference },
+        event.idempotencyKey,
+        true,
+        parent.context,
+      ),
+      approval: {
+        callId: saved.actionCallId,
+        actionName: saved.actionName,
+        requestId: saved.requestId,
+        request: checkpointContent(saved.requestAttribute),
+      },
+    });
+    if (operation !== undefined) live.set(event.requestId, operation);
   };
 
   const onResolved = async (
@@ -89,33 +116,35 @@ export function createAgentApprovalInstrumentation(input: {
       trace.setSpan(ROOT_CONTEXT, trace.wrapSpanContext({ ...state.parent, isRemote: false })),
       state.channelAudience,
     );
-    const runtime = await input.lifecycle.resolve(
-      eveScopeRecord(
-        {
-          ...state,
-          frameworkVersion: input.frameworkVersion,
-          reference: {
-            ...state.parent,
-            spanId: input.lifecycle.reserve({
-              key: `approval:${event.idempotencyKey}`,
-              parent: state.parent,
-              traceFlags: state.parent.traceFlags,
-            }).spanId,
+    const runtime =
+      live.get(state.requestId) ??
+      (await input.lifecycle.resolve(
+        eveScopeRecord(
+          {
+            ...state,
+            frameworkVersion: input.frameworkVersion,
+            reference: {
+              ...state.parent,
+              spanId: input.lifecycle.reserve({
+                key: `approval:${event.idempotencyKey}`,
+                parent: state.parent,
+                traceFlags: state.parent.traceFlags,
+              }).spanId,
+            },
           },
-        },
-        event.idempotencyKey,
-        {
-          type: "approval",
-          options: {
-            callId: state.actionCallId,
-            actionName: state.actionName,
-            requestId: state.requestId,
-            request: checkpointContent(state.requestAttribute),
+          event.idempotencyKey,
+          {
+            type: "approval",
+            options: {
+              callId: state.actionCallId,
+              actionName: state.actionName,
+              requestId: state.requestId,
+              request: checkpointContent(state.requestAttribute),
+            },
           },
-        },
-      ),
-      { deferred: true, executionContext: parent },
-    );
+        ),
+        { deferred: true, executionContext: parent },
+      ));
     await runtime?.complete(
       event.outcome === "failed"
         ? {
@@ -128,6 +157,7 @@ export function createAgentApprovalInstrumentation(input: {
             response: event.response,
           },
     );
+    live.delete(state.requestId);
   };
 
   return {

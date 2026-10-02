@@ -23,7 +23,7 @@ import type {
 } from "#tracing/eve/agent-trace-state.js";
 import { readInstrumentationDecision } from "#shared/instrumentation-decision.js";
 import { eveActivationMetadata } from "#tracing/eve/metadata.js";
-import { eveScopeRecord } from "#tracing/eve/checkpoint-codec.js";
+import { eveScopeRecord, eveOperationInput } from "#tracing/eve/checkpoint-codec.js";
 import type { AgentTurnTraceState } from "#tracing/eve/agent-trace-state.js";
 import { applyPrincipalTraceDecision } from "#instrumentation/principal-summary.js";
 import { normalizeInstrumentationChannelKind } from "#internal/instrumentation.js";
@@ -59,6 +59,7 @@ interface EveSessionTracing {
 }
 
 export function createEveSessionTracing(input: EveSessionTracingInput): EveSessionTracing {
+  const freshTurns = new Set<string>();
   const ensureSessionContext = async (event: SessionMetadata): Promise<AgentSessionTraceState> => {
     let state = await input.stateStore.getSession(event.sessionId);
     if (state === undefined) {
@@ -146,6 +147,7 @@ export function createEveSessionTracing(input: EveSessionTracingInput): EveSessi
       ...turn,
       context: turnContext,
     });
+    freshTurns.add(JSON.stringify([event.sessionId, event.turnId]));
     return portableSpanContext(turnContext, session.decision);
   };
 
@@ -173,34 +175,31 @@ export function createEveSessionTracing(input: EveSessionTracingInput): EveSessi
       if (turn === undefined) return;
       const session = await input.stateStore.getSession(event.sessionId);
       if (isSampledTrace(turn.context)) {
-        const runtime = await input.lifecycle.resolve(
-          eveScopeRecord(
-            {
-              ...turn,
-              sessionId: event.sessionId,
-              turnId: event.turnId,
-              agentName: session?.agentName ?? turn.subagentName,
-              frameworkVersion: input.frameworkVersion,
-              reference: turn.context,
-              links: activationLinks(turn),
-              content: {
-                recordInputs:
-                  session?.decision?.action === "record" && session.decision.recordInputs,
-                recordOutputs:
-                  session?.decision?.action === "record" && session.decision.recordOutputs,
-              },
-            },
-            `${event.sessionId}:${event.turnId}`,
-            {
-              type: "activation",
-              options: eveActivationMetadata({ session, turn, sessionId: event.sessionId }),
-            },
-          ),
-          {
-            deferred: true,
-            executionContext: withChannelAudience(ROOT_CONTEXT, session?.channelAudience),
+        const operationInput = {
+          ...turn,
+          sessionId: event.sessionId,
+          turnId: event.turnId,
+          agentName: session?.agentName ?? turn.subagentName,
+          frameworkVersion: input.frameworkVersion,
+          reference: turn.context,
+          links: activationLinks(turn),
+          content: {
+            recordInputs: session?.decision?.action === "record" && session.decision.recordInputs,
+            recordOutputs: session?.decision?.action === "record" && session.decision.recordOutputs,
           },
-        );
+        };
+        const key = `${event.sessionId}:${event.turnId}`;
+        const metadata = eveActivationMetadata({ session, turn, sessionId: event.sessionId });
+        const host = withChannelAudience(ROOT_CONTEXT, session?.channelAudience);
+        const runtime = freshTurns.has(JSON.stringify([event.sessionId, event.turnId]))
+          ? await input.lifecycle.turn({
+              ...eveOperationInput(operationInput, key, true, host),
+              metadata,
+            })
+          : await input.lifecycle.resolve(
+              eveScopeRecord(operationInput, key, { type: "activation", options: metadata }),
+              { deferred: true, executionContext: host },
+            );
         await runtime?.complete(
           turn.terminal?.type === "turn.failed"
             ? {
@@ -216,6 +215,7 @@ export function createEveSessionTracing(input: EveSessionTracingInput): EveSessi
         );
       }
       await input.stateStore.deleteTurn(event.sessionId, event.turnId);
+      freshTurns.delete(JSON.stringify([event.sessionId, event.turnId]));
     },
     async recordModelUsage(sessionId, turnId, usage) {
       if (usage.inputTokens === undefined && usage.outputTokens === undefined) return;

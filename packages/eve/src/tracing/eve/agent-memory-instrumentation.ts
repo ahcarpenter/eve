@@ -18,7 +18,7 @@ import type { AgentTraceStateStore } from "#tracing/eve/agent-trace-state.js";
 import { withChannelAudience } from "#tracing/eve/channel-audience-context.js";
 import { isSampledTrace } from "#shared/trace-policy.js";
 import type { ConversationEnvironment } from "#shared/conversation-context.js";
-import { eveScopeRecord } from "#tracing/eve/checkpoint-codec.js";
+import { eveOperationInput } from "#tracing/eve/checkpoint-codec.js";
 import type { MemoryOperation } from "#tracing/lib/core/operations.js";
 import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
 
@@ -69,8 +69,8 @@ export function createAgentMemoryInstrumentation(input: {
     const parentSpan = parent === undefined ? undefined : trace.getSpan(parent)?.spanContext();
     if (parent === undefined || parentSpan === undefined || !isSampledTrace(parentSpan)) return;
     const reference = { ...parentSpan, spanId: input.idGenerator.allocateSpanId() };
-    const runtime = await input.lifecycle.resolve(
-      eveScopeRecord(
+    const runtime = await input.lifecycle.memory({
+      ...eveOperationInput(
         {
           ...event,
           turnId: event.turnId ?? "",
@@ -79,18 +79,16 @@ export function createAgentMemoryInstrumentation(input: {
           reference,
         },
         event.idempotencyKey,
-        {
-          type: "memory",
-          options: {
-            operation: event.operationName,
-            phase: event.phase,
-            slot: event.slot,
-            storeId: event.storeId,
-          },
-        },
+        false,
+        parent,
       ),
-      { executionContext: parent },
-    );
+      memory: {
+        operation: event.operationName,
+        phase: event.phase,
+        slot: event.slot,
+        storeId: event.storeId,
+      },
+    });
     if (runtime === undefined) return;
     spans.set(event.idempotencyKey, {
       context: trace.setSpan(parent, trace.wrapSpanContext(runtime.reference)),
