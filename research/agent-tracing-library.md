@@ -1,605 +1,105 @@
 ---
 issue: TBD
 status: proposed
-last_updated: "2026-10-01"
+last_updated: "2026-10-02"
 ---
 
 # Agent tracing library
 
 ## Decision
 
-### Revision after deep-module review
+Extract the tracing behavior used by eve into `tracing/lib/`. Keep eve event
+translation, trusted policy, checkpoint codecs, and installation outside the
+library in `tracing/eve/` and the existing instrumentation modules.
 
-The application and runtime interfaces are separate. Application scopes use
-`attempt`, `modelCall`, and `toolExecution`; attempts still emit `agent.step`.
-Domain result descriptions are required. A resolved promise does not imply
-approval or a successful tool result.
+The library has no callback authoring DSL or standalone AI SDK tracing pipeline.
+Those interfaces had no production consumer. eve's SDK event bridge uses shared
+payload conversion without installing a second SDK instrumentation path.
 
-The snapshot decision replaces the earlier `checkpointer` proposal. The runtime
-persists detached snapshots in its own checkpoint transaction. Tracing does not
-perform `load`, `save`, or `remove`. Select live or durable behavior explicitly
-at recorder construction, not through storage configuration.
+## Runtime interface
 
-`createAiSdkTracing` selects SDK conversion and serialization. The application
-object exposes turn execution and SDK telemetry, not reservation or restoration.
-`createTraceRecorder` supplies operation-specific handles with discriminated
-completion outcomes. No second prepared-span durable driver remains.
+Create `createTraceRecorder` with an output backend, content serializer, and
+explicit live or durable mode. Pass semantic operation records to `resolve`.
+eve's codec supplies existing IDs, parent references, start times, capture
+permissions, and operation metadata. Invalid records return no handle.
 
-eve now uses typed recorder handles, corrupt-snapshot recovery, and
-recorder-owned tool correlation. The current internal contract is documented in
-[the library guide](../packages/eve/src/tracing/lib/README.md).
+Operation-specific handles expose context activation and discriminated
+completion outcomes. Attempt handles also create model-call handles and accept
+gateway costs. Model completion includes model results and usage. Approval
+completion distinguishes approval, denial, cancellation, and failure.
 
-Extract one neutral trace engine. Use the engine in eve before a public release.
-Add an AI SDK adapter for agents that do not use eve.
+The recorder does not run application work. It does not expose a parallel
+checkpoint format or load, save, or remove workflow state. eve retains its
+existing checkpoint formats, scheduler, transactions, and replay ownership.
 
-This plan supersedes the trace topology in
-[Provider-neutral local observability](./provider-neutral-local-observability.md).
-Keep its existing `createAiSdkHookBridge` for eve event conversion. The standalone
-SDK adapter supplies callback-owned lifetimes; it does not replace eve's bridge
-or install a second bridge in eve.
+Tool calls can start before action events arrive. `toolCall` supplies semantic
+tool input, an execution key, an action key, an attempt group, and a fallback
+reference. The recorder reserves the tool reference and retains MCP enrichment
+and terminal state. `actionAvailable` attaches the action parent. `completeTool`
+records the outcome. `endAttempt` drains unresolved tools using the fallback.
+eve does not maintain separate tool-correlation maps.
 
-Use a callback DSL to construct the trace topology. SDK hooks construct the same
-scopes internally. Keep persistence at the runtime boundary, not in authoring code.
+`createTransportLifecycle` records channel requests and MCP operations.
+`createMcpTracing` reuses active tool operations for MCP calls. It creates
+standalone MCP spans only when no tool operation is active.
 
-Keep vendor names out of the core API. An explicit output wrapper preserves
-existing eve traces and Agent Runs behavior.
-
-All APIs below are proposed. The attribute tables define the neutral contract.
-The compatibility table maps that contract to current eve output.
-The prose follows ASD-STE100 rules. Software identifiers are technical names.
-This document does not claim certified ASD-STE100 compliance.
-
-## Authoring API
-
-```ts
-interface AgentTracing {
-  turn<T>(input: TurnInput, execute: (turn: TurnScope) => Promise<T>): Promise<T>;
-}
-
-interface TurnInput {
-  conversationId: string;
-  runId: string;
-  turnId: string;
-  sequence: number;
-  caller?: TraceReference;
-  request?: TraceReference;
-  signal?: AbortSignal;
-}
-
-interface TraceReference {
-  traceId: string;
-  spanId: string;
-  traceFlags: number;
-  isRemote?: boolean;
-  tracestate?: string;
-}
-
-interface TurnScope {
-  attempt<T>(
-    input: { stepIndex: number; attempt: number },
-    execute: (attempt: StepScope) => Promise<T>,
-  ): Promise<T>;
-}
-
-interface StepInput {
-  index: number;
-  attempt?: number;
-}
-interface ModelInput {
-  provider: string;
-  modelId: string;
-  messages?: readonly unknown[];
-}
-interface ModelResult {
-  usage: { inputTokens?: number; outputTokens?: number };
-  finishReason: string;
-}
-interface ActionInput {
-  callId: string;
-  name: string;
-  arguments?: unknown;
-}
-interface ApprovalInput {
-  requestId: string;
-  request?: unknown;
-}
-interface StepScope {
-  modelCall<T>(
-    input: ModelInput,
-    execute: () => Promise<T>,
-    result: (value: T) => ModelResult,
-  ): Promise<T>;
-  action<T>(
-    input: ActionInput,
-    execute: (action: ActionScope) => Promise<T>,
-    describe: (value: T) => ActionResult,
-  ): Promise<T>;
-}
-interface ActionScope {
-  toolExecution<T>(
-    input: { executionId: string },
-    execute: () => Promise<T>,
-    describe: (value: T) => ActionResult,
-  ): Promise<T>;
-  approval<T>(
-    input: ApprovalInput,
-    execute: () => Promise<T>,
-    describe: (value: T) => { outcome: "approved" | "denied" | "cancelled" },
-  ): Promise<T>;
-}
-type ActionResult =
-  | { outcome: "completed"; output?: unknown }
-  | { outcome: "failed"; errorType: string; error?: unknown }
-  | { outcome: "rejected" | "cancelled" };
-
-declare function createAgentTracing(input: {
-  agentName?: string;
-  framework?: { name: string; version: string };
-  output: TraceBackend;
-  content?: { recordInputs: boolean; recordOutputs: boolean };
-}): AgentTracing;
-
-declare function liveOtelBackend(tracer: Tracer): TraceBackend;
-declare function aiSdkTracing(
-  turn: TurnScope,
-  options?: {
-    integrations?: readonly Telemetry[];
-  },
-): TelemetryOptions;
-
-type CaptureDecision =
-  { emit: false } | { emit: true; recordInputs: boolean; recordOutputs: boolean };
-```
-
-```ts
-const tracing = createAiSdkTracing({
-  agent: { name: "support" },
-  output: liveOtelBackend(tracer),
-  integrations: [existingTelemetry],
-  content: { inputs: false, outputs: false },
-});
-
-await tracing.turn({ conversationId, runId, turnId, sequence: 0 }, async (turn) => {
-  const result = await generateText({
-    model,
-    messages,
-    tools,
-    telemetry: tracing.telemetry(turn),
-  });
-  return result.text;
-});
-```
-
-The callback defines the turn lifetime. Consume streams inside the callback.
-Await child work before the callback ends. A thrown application error marks the
-turn as failed. The library throws the same error.
-
-The standalone SDK adapter returns full `TelemetryOptions` with `isEnabled: true`.
-Its `integrations` option retains unrelated telemetry integrations.
-eve uses `createAiSdkHookBridge` instead. That bridge emits model and tool events,
-not action events; framework dispatch remains the sole action source.
-
-For a custom loop, construct children through their parent scopes:
-
-```ts
-await tracing.turn(turnInfo, async (turn) => {
-  await turn.attempt({ stepIndex: 0, attempt: 0 }, async (attempt) => {
-    await attempt.modelCall({ provider, modelId }, callModel, modelResult);
-    await attempt.action(
-      { callId, name: "lookup" },
-      async (action) => {
-        await action.approval({ requestId }, requestApproval, (accepted) => ({
-          outcome: accepted ? "approved" : "denied",
-        }));
-        return await action.toolExecution({ executionId }, executeLookup, (output) => ({
-          outcome: "completed",
-          output,
-        }));
-      },
-      (output) => ({ outcome: "completed", output }),
-    );
-  });
-});
-```
-
-Construction controls parentage, span names, attributes, completion, and cleanup.
-No authoring scope exposes a raw span, attribute map, checkpoint, or resume method.
-Protocol-specific factories select conversion and serialization. Consumers use
-callback scopes or separate recorder handles for semantic operations.
-Attribute builders are private implementation details, not API entry points.
-
-The lifecycle owns semantic activation, pending tool parentage, reference
-reservation, and usage accumulation. `lifecycle.active()` exposes the current
-semantic operation to adapters. The OTel backend retains that operation across
-async calls and intersects capture ceilings. MCP adapters enrich an active tool;
-they create a fallback operation only when no tool owns execution.
-
-eve supplies stable correlation keys, trusted policy, and existing checkpoint
-records. It does not buffer tool telemetry or allocate child span IDs itself.
-Host-owned durable totals remain in the existing checkpoint format.
-
-## Span topology and lifetime
+## Topology and output contract
 
 ```text
-transport trace
-  └── agent.channel.request
-        ── channel.request link ──> activation trace
-
-activation trace
-invoke_agent <agent>
-  ├── search_memory / upsert_memory
-  └── agent.step
-        ├── chat <model>
-        │     └── provider HTTP spans
-        └── agent.action
-              ├── agent.approval
-              └── execute_tool <tool>
-                    └── memory, MCP, HTTP, or database spans
-
-agent.action or execute_tool
-  ── agent.dispatch link ──> invoke_agent <child> in a new trace
-
-execution delivery span
-  ── execution.delivery link ──> agent.step in a different trace
+eve lifecycle events and checkpoint codec ──> trace recorder ──┐
+eve SDK bridge ──> shared payload conversion ─────────────────┤
+channel requests and MCP calls ──> transport lifecycle ────────┤
+                                                             ↓
+                                                       trace engine
+                                                             ↓
+                                                OTel + eve output profile
 ```
 
-| Span                             | Kind                              | Lifetime and parent                                                                            |
-| -------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `invoke_agent <agent>`           | INTERNAL                          | New root for each turn. Durable mode emits the root at its terminal transition.                |
-| `agent.step`                     | INTERNAL                          | One execution attempt. Parent is the activation.                                               |
-| `chat <model>`                   | CLIENT                            | One physical model request. Parent is the step. Stream completion ends the span.               |
-| `agent.action`                   | INTERNAL; CLIENT for remote calls | Logical dispatch through accepted result. Parent is the step. Can cross workers.               |
-| `execute_tool <tool>`            | INTERNAL                          | Physical tool execution. Parent is the action. Step is the fallback parent.                    |
-| `agent.approval`                 | INTERNAL                          | Tool approval wait. Parent is the action. Can cross workers.                                   |
-| `search_memory`, `upsert_memory` | CLIENT                            | One memory operation. Use active agent context, then stored turn or session context.           |
-| `agent.channel.request`          | SERVER                            | Optional inbound request. Use extracted transport context. End when the handler returns.       |
-| `tools/list`                     | CLIENT                            | MCP discovery. Parent is the active context.                                                   |
-| `tools/call <tool>`              | CLIENT                            | MCP fallback when no tool annotation target exists. Otherwise annotate the existing tool span. |
+Preserve turn → attempt → model/action → approval/tool parentage. Attempts emit
+`agent.step`. Memory spans use their runtime-selected parent. Channel requests
+and dispatch links remain separate from agent parentage.
 
-Channel delivery events update activation metadata. They do not create spans.
-Questions and session limits do not create approval spans.
-Registration and sampling probes are private. Do not export those probes.
+Preserve existing span names, GenAI attributes, terminal events, usage, error
+classes, W3C tracestate, and Vercel session attribution. The library owns
+`TRACE_SCHEMA_VERSION = 4`; eve's profile does not rewrite it. Extraction changes
+ownership, not the ingestion schema.
 
-Only the first child turn links to its dispatching caller. Related turns and
-agents share `gen_ai.conversation.id`. Trace links are not authorization grants.
+The eve output profile translates attributes and link attributes only. It
+retains legacy `eve.link.type`, connection keys, channel-request keys, and
+Vercel attribution. It cannot change span names or link references.
 
-## Attribute contract
+Use explicit parent references to construct spans and the host context manager
+to activate operations. The backend accepts opaque host context so unrelated
+host context survives activation. Do not replace global OTel registration or
+use raw-span bridges, fake tracers, or proxy instrumentation.
 
-Omit optional attributes when the source or capture decision omits them.
-Do not add common attributes to span types that do not currently receive them.
-`string[]` means an OTel string array. Content marked JSON is serialized text.
+## Privacy, durability, and failures
 
-### Shared groups
+Capture permissions can decrease but cannot increase. Unsampled operations must
+not retain content. Bound and detach retained tool data; do not retain arbitrary
+application payloads until delayed parent attachment. Denied capture excludes
+exception details but preserves error classes.
 
-| Group            | Attributes                                                                                                                                                   | Applies to                                                            |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| Identity         | `agent.run.id: string`, `agent.trace.schema.version: 4`, `gen_ai.conversation.id: string`                                                                    | Activation, step, model, action, tool, approval, memory.              |
-| Naming           | `operation.name: string`, `resource.name: string`                                                                                                            | All except MCP discovery and fallback spans.                          |
-| Framework        | `agent.framework.name: string`, `agent.framework.version: string`                                                                                            | Activation, step, action, approval.                                   |
-| Attempt          | `agent.step.index: number`, `agent.step.attempt: number`, `agent.turn.id: string`                                                                            | Step, action, approval.                                               |
-| Structural usage | `agent.usage.input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd` under `agent.usage.*`: optional numbers                   | Step, model, action; activation has input and output totals only.     |
-| GenAI usage      | `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_write.input_tokens`: optional numbers | Model; activation has input and output totals only.                   |
-| Runtime context  | `ai.settings.context.<key>`: OTel primitive or homogeneous primitive array                                                                                   | Step, model.                                                          |
-| Error            | `error.type: string`; ERROR status; permitted exception event and status message                                                                             | Failed agent operations and MCP. Request spans use ERROR status only. |
+Durable output uses eve's ID generator and sampler preparation. Preserve IDs,
+parents, and timestamps from existing checkpoints. Do not add a second durable
+driver or storage service. Workflow concurrency and export deduplication remain
+runtime responsibilities.
 
-Invocation totals add completed model calls in that activation. They exclude
-delegated agents. Preserve current step usage assignment during extraction.
-The step receives completed call usage, not a second aggregate.
-
-### Activation
-
-| Attributes                                                             | Type and rule                                                                                          |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `gen_ai.operation.name`                                                | `invoke_agent`.                                                                                        |
-| `gen_ai.agent.name`, `agent.name`                                      | Optional strings.                                                                                      |
-| `agent.run.type`                                                       | `session` or `subagent`.                                                                               |
-| `agent.turn.id`, `agent.turn.sequence`, `agent.turn.outcome`           | String; number; optional `completed`, `cancelled`, or `failed`.                                        |
-| `agent.channel.audience`                                               | Optional `public`, `private`, or `unknown`.                                                            |
-| `agent.channel.kind`, `agent.channel.name`, `agent.channel.request.id` | Optional strings.                                                                                      |
-| `agent.channel.delivery.id`, `agent.channel.delivery.input`            | Optional string; optional input JSON. Attach only for unique delivery ownership.                       |
-| `agent.session.origin`, `agent.session.title`                          | Optional `schedule` or `channel`; optional input text.                                                 |
-| `agent.schedule.id`, `agent.subagent.name`                             | Optional strings. Do not inherit schedule ID into children.                                            |
-| `agent.parent_call.id`, `agent.parent_run.id`                          | Optional strings.                                                                                      |
-| `agent.principal.current.id`, `agent.principal.initiator.id`           | Optional strings subject to capture policy.                                                            |
-| `agent.principal.current.type`, `agent.principal.initiator.type`       | Optional `anonymous`, `app`, `local-dev`, `none`, `other`, `runtime`, `service`, `unknown`, or `user`. |
-| `agent.trace.content.input`, `agent.trace.content.output`              | Booleans. Describe the effective capture decision.                                                     |
-
-Child activations omit inherited title and channel origin unless they own the
-trace-session metadata. Keep this ownership rule in the eve adapter.
-
-### Step and model
-
-| Span  | Attributes                                                                                              | Type and rule                                                                |
-| ----- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Step  | `agent.name`, `agent.channel.kind`, `agent.session.origin`                                              | Optional strings; origin is `schedule` or `channel`.                         |
-| Step  | `agent.model.id`, `agent.model.provider`                                                                | Optional strings set when a model call starts.                               |
-| Step  | `gen_ai.usage.cost`, `gen_ai.usage.gateway_cost`, `gen_ai.usage.input_cost`, `gen_ai.usage.output_cost` | Optional gateway-reported numbers. Do not estimate cost.                     |
-| Step  | `gen_ai.generation.id`                                                                                  | Optional gateway generation string.                                          |
-| Model | `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`                                 | `chat`; provider string; model string.                                       |
-| Model | `gen_ai.agent.name`, `gen_ai.response.id`, `gen_ai.response.model`                                      | Optional strings.                                                            |
-| Model | `gen_ai.response.finish_reasons`                                                                        | Optional string array. Does not require content permission.                  |
-| Model | `gen_ai.input.messages`, `gen_ai.system_instructions`                                                   | Optional input JSON in GenAI format.                                         |
-| Model | `gen_ai.output.messages`                                                                                | Optional output JSON in GenAI format.                                        |
-| Model | `ai.response.finish_reason`, `ai.response.reasoning`, `ai.response.text`                                | Optional output strings. Preserve the current output gate for finish reason. |
-| Model | `ai.response.tool_calls`, `ai.response.tool_results`                                                    | Optional output JSON. Includes provider-executed tool results.               |
-
-### Action, tool, and approval
-
-| Span         | Attributes                                                               | Type and rule                                                            |
-| ------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| Action       | `agent.action.call_id`, `agent.action.name`                              | Strings.                                                                 |
-| Action       | `agent.action.kind`                                                      | `load-skill`, `remote-agent-call`, `subagent-call`, or `tool-call`.      |
-| Action       | `agent.action.outcome`                                                   | Optional `abandoned`, `cancelled`, `completed`, `failed`, or `rejected`. |
-| Action       | `agent.action.error.code`                                                | Optional string.                                                         |
-| Action       | `agent.invocation.role`, `gen_ai.agent.name`                             | `caller` and agent string for agent-call actions only.                   |
-| Action, tool | `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result`                  | Optional input JSON and output JSON. Agent-call actions omit both.       |
-| Tool         | `gen_ai.operation.name`, `gen_ai.tool.type`                              | `execute_tool`; `function`.                                              |
-| Tool         | `gen_ai.agent.name`, `gen_ai.tool.call.id`, `gen_ai.tool.name`           | Optional agent string; call string; tool string.                         |
-| Approval     | `agent.action.call_id`, `agent.action.name`, `agent.approval.request_id` | Strings.                                                                 |
-| Approval     | `agent.approval.kind`                                                    | `tool-approval`.                                                         |
-| Approval     | `agent.approval.outcome`                                                 | `approved`, `cancelled`, `denied`, `failed`, `ignored`, or `invalid`.    |
-| Approval     | `agent.approval.request`, `agent.approval.response`                      | Optional input JSON and output JSON.                                     |
-
-An error result marks failure even when execution does not throw.
-SDK tool hooks can precede action dispatch. Reserve tool context, then attach the
-action parent. Drain unresolved tools with the step fallback on attempt exit.
-
-### Memory, request, and MCP
-
-| Span              | Attributes                                                          | Type and rule                                               |
-| ----------------- | ------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Memory            | `gen_ai.operation.name`                                             | `search_memory` or `upsert_memory`.                         |
-| Memory            | `gen_ai.memory.store.id`, `agent.memory.phase`, `agent.memory.slot` | Strings.                                                    |
-| Memory            | `agent.turn.id`, `gen_ai.memory.record.count`                       | Optional string; optional number.                           |
-| Memory            | `gen_ai.memory.records`                                             | Optional JSON. Retain current input-content classification. |
-| Request           | `http.request.method`, `http.route`                                 | Strings. Use a route template, not the concrete path.       |
-| Request           | `http.response.status_code`, `url.scheme`, `server.address`         | Optional number; optional strings.                          |
-| Request           | `agent.channel.name`, `agent.channel.kind`                          | Optional strings set after channel resolution.              |
-| MCP               | `agent.connection.name`, `mcp.method.name`                          | Strings. Also annotate existing tool spans.                 |
-| MCP               | `mcp.protocol.version`, `mcp.session.id`, `jsonrpc.request.id`      | Optional strings.                                           |
-| MCP               | `rpc.response.status_code`                                          | Optional string.                                            |
-| MCP               | `network.protocol.name`, `network.transport`                        | `http`; `tcp`.                                              |
-| MCP call          | `gen_ai.operation.name`, `gen_ai.tool.name`                         | `execute_tool`; optional string.                            |
-| MCP fallback call | `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result`             | Optional input JSON and output JSON.                        |
-
-Request spans omit bodies, query parameters, credentials, and session IDs.
-MCP discovery and fallback spans do not receive common agent identity attributes.
-
-### Events, links, and status
-
-| Owner       | Contract                                                                                                                  |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Activation  | `turn.started`, then optional `turn.completed`, `turn.cancelled`, or `turn.failed`.                                       |
-| Step        | `step.started`, then `step.completed` or `step.failed`.                                                                   |
-| Error event | `exception` with permitted `exception.type`, `exception.message`, and `exception.stacktrace`. Retain current size bounds. |
-| Link        | Trace reference and `agent.link.type`: `agent.dispatch`, `channel.request`, or `execution.delivery`.                      |
-| Status      | OTel status code and optional permitted message. Cancellation alone is not ERROR.                                         |
-
-## Architecture and backend boundary
-
-```text
-application turn callback ──> live activation driver ───┐
-AI SDK hooks ───────────────> SDK adapter ──────────────┤
-                                                       ├─> shared trace engine
-eve lifecycle events ──────> eve adapter ──────────────┤       ↓
-eve stored state ──────────> durable activation driver ┘  output mapping
-                                                               ↓
-                                                          OTel backend
-                                                               ↓
-                                                       destination policies
-```
-
-The engine receives prepared identities, metadata, capture decisions, and parent
-references. It does not read eve context or environment variables.
-Adapters normalize SDK payloads before the engine serializes content.
-
-Use explicit parents to construct the topology. Use OTel `context.with()` to
-activate those parents during execution. This permits HTTP and database child
-spans. Use the host's installed context manager. Do not replace global setup.
-Do not use `enterWith()` to create start/end scopes.
-
-Keep two backend capabilities:
-
-```ts
-interface TraceBackend {
-  start(span: PreparedSpan): SpanWriter;
-  run<T>(reference: TraceReference, capture: CaptureDecision, execute: () => T): T;
-  current(): TraceReference | undefined;
-}
-
-interface DurableTraceBackend extends TraceBackend {
-  reserveActivation(input: {
-    key: string;
-    span: PreparedSpan;
-    capture: CaptureDecision;
-  }): TraceReference;
-  reserveChild(parent: TraceReference, key: string): TraceReference;
-  startReserved(span: PreparedSpan, reference: TraceReference): SpanWriter;
-}
-```
-
-These backend types are adapter contracts, not authoring scope APIs:
-
-```ts
-type Attributes = Readonly<
-  Record<string, string | number | boolean | readonly (string | number | boolean)[] | undefined>
->;
-interface PreparedSpan {
-  type:
-    | "activation"
-    | "step"
-    | "model"
-    | "action"
-    | "tool"
-    | "approval"
-    | "memory"
-    | "channelRequest"
-    | "mcp";
-  operationId: string;
-  name: string;
-  attributes: Attributes;
-  kind?: "INTERNAL" | "CLIENT" | "SERVER";
-  parent?: TraceReference;
-  root?: boolean;
-  links?: readonly TraceLink[];
-  startTimeMs?: number;
-}
-interface SpanWriter {
-  reference: TraceReference;
-  setAttribute(key: string, value: NonNullable<Attributes[string]>): void;
-  addEvent(name: string, attributes?: Attributes, timeMs?: number): void;
-  fail(error?: unknown, errorType?: string): void;
-  setStatus(code: "UNSET" | "OK" | "ERROR"): void;
-  end(timeMs?: number): void;
-}
-```
-
-`Tracer`, `Telemetry`, and `TelemetryOptions` are OTel and AI SDK adapter types.
-`ContentSerializer` provides bounded JSON, text, and GenAI message serialization.
-`TraceCheckpointer` loads, saves, and removes semantic scope records by key.
-
-Ordinary mode starts a real root. The root sampler supplies the trace flags.
-Durable mode reserves IDs and stores timestamps before span emission.
-An arbitrary OTel tracer cannot supply reserved-ID support. Use eve's existing
-ID generator and sampler preparation path for the first durable backend.
-
-Async context does not cross workers. Persist portable references and capture
-decisions for continuation. Keep transport context separate from dispatch links.
-
-## Output overrides and compatibility
-
-Use a private eve output profile in the OTel adapter. Do not add vendor fields
-to lifecycle input or create a second span engine. The profile only translates
-attributes and link attributes. It cannot change names or trace references.
-
-```ts
-interface OutputMapping {
-  attributes(span: MappingContext, attributes: Attributes): Attributes;
-  link(span: MappingContext, link: TraceLink): Attributes;
-}
-
-interface MappingContext {
-  type: PreparedSpan["type"];
-  operationId: string;
-}
-
-interface TraceLink {
-  context: TraceReference;
-  relationship: "agent.dispatch" | "channel.request" | "execution.delivery";
-}
-```
-
-Both neutral and eve output use the library-owned trace schema version 4.
-The output profile does not rewrite this version. Snapshot format versioning is separate.
-Apply overrides to initial attributes, later updates, and root sampler input.
-Preserve IDs, topology, kinds, timestamps, and events. Do not map third-party spans.
-Mappings cannot restore content denied before span creation.
-
-The eve wrapper lives in `adapters/eve/compatibility.ts`:
-
-```ts
-const backend = liveOtelBackend(tracer, eveOutputMapping());
-```
-
-Runtime records supply platform and trace-session attribution from existing eve
-state. Do not parse operation IDs or use an unbounded global metadata map.
-Keep attribution until deferred span emission finishes.
-
-| Neutral contract                                   | Existing eve output                                                     |
-| -------------------------------------------------- | ----------------------------------------------------------------------- |
-| Library `agent.trace.schema.version=4`             | Preserve version 4 without rewriting it.                                |
-| Link `agent.dispatch`                              | Write `eve.link.type=agent.dispatch`.                                   |
-| Link `channel.request`                             | Write `eve.link.type=channel.request`.                                  |
-| Link `execution.delivery`                          | Write `eve.link.type=workflow.delivery`.                                |
-| Request `agent.channel.name`, `agent.channel.kind` | Rename to `eve.channel.name`, `eve.channel.kind` on request spans only. |
-| MCP `agent.connection.name`                        | Rename to `eve.connection.name` on MCP spans and tool updates.          |
-| Adapter trace-session attribution                  | Add `vercel.session_id` only on Vercel spans with agent identity.       |
-| Other names, attributes, events, and links         | Retain current values without duplicate aliases.                        |
-
-Keep activation `agent.channel.*` keys unchanged. Set framework name and version
-from the actual caller. eve installation retains its existing tracer scopes.
-Apply compatibility before destination policies. Existing filters must see the
-existing keys. Do not repeat compatibility mapping in the Agent Runs exporter.
-
-Protocol adapters retain current `eve` tracestate and baggage formats. Those
-formats do not belong in the core API. Transport compatibility is separate from
-output mapping and authorization.
-
-## eve adoption and durable state
-
-Create the recorder separately from application tracing. Select live or durable
-behavior at construction. The runtime commits detached versioned snapshots with
-its existing workflow checkpoint. The library does not perform storage IO.
-
-Internal runtime bindings supply stable operation keys. Scope construction
-restores or creates the corresponding record. The record retains ancestry,
-reserved identity, start time, capture permission, and semantic operation data.
-Only the application runtime controls suspension, replay, and retry.
-Tracing must never invoke earlier application callbacks during restoration.
-
-Operation-specific recorder handles are the runtime API. The callback DSL and
-SDK hooks use the same private operation implementation. Completion outcomes are
-discriminated; there is no independent failure flag in the recorder contract.
-The backend accepts opaque host context explicitly;
-no adapter captures a raw span or wraps it with `Proxy`.
-
-eve can project its existing durable records into runtime scope bindings.
-Do not add a second persistence owner or expose those bindings to tool authors.
-
-Keep `createAgentOtelInstrumentation()` as the installation entry point.
-Replace its span construction with calls to the shared engine.
-Keep the current bus, context runner, and authored instrumentation interfaces.
-
-Do not change serialized formats during the first extraction.
-Durable actions and approvals can outlive a step. Callback return does not finish
-them. eve terminal events remain the completion authority.
-eve retains its event bridge instead of installing the standalone SDK adapter.
-SDK step completion does not
-replace framework completion after durable action resolution.
-
-## Export, privacy, and failure rules
-
-- Ordinary mode records no content by default. Permit inputs and outputs separately.
-- eve resolves audience and trusted forwarding before it supplies a capture decision.
-- Delegation and continuation must not increase capture permission.
-- Retain bounded GenAI JSON, text, and exception serialization.
-- Keep destination filtering outside the engine. Do not mutate shared spans.
-- Retain the current content classifier, including third-party `ai.*` attributes.
-- Redaction removes denied content, exception details, and status messages.
-- Instrumentation failures must not replace application results or errors.
-- End unfinished live model and tool spans on attempt termination.
-
-Keep global registration, local trace storage, replay deduplication, and parent
-export ordering in eve installation code. Keep CLI telemetry separate.
-
-The Agent Runs destination retains the current Vercel request-context transport.
-Export before that context becomes unavailable. Preserve resource attributes and
-instrumentation scope in OTLP. Keep automatic deployment configuration in eve.
-Trace topology alone does not guarantee Agent Runs availability.
+Tracing failures must not replace application results or errors. Failed context
+installation uses host suppression when available and never retries an entered
+application callback. Invalid checkpoint records disable only the affected
+trace operation.
 
 ## Delivery and validation
 
-Keep runtime behavior in `packages/eve` through internal adoption.
-Before public release, validate eve adoption and an internal standalone SDK consumer.
+Keep design, library implementation, and eve integration in separate draft
+stack layers. All `tracing/lib/` implementation changes belong in the library
+layer. The integration layer must not change library implementation.
 
-Compare mapped output with each current source writer. Check late MCP updates,
-deferred roots, sampler inputs, and destination filters. Check that neutral
-output has no `eve.*` keys or `vercel.session_id`.
+Keep tests at the production boundary: recorder correlation and checkpoint
+resolution, OTel context/output, eve runtime instrumentation, and installed
+pipeline topology. Do not retain production APIs solely for library tests.
 
-Check parallel turns, tool races, SDK retries, streaming, cancellation, and root
-sampling. Check denied content after delegation and continuation.
-Check `eve traces` rendering and usage totals. Add fixture-owned activation and
-delegation e2e coverage. Run e2e in CI.
-
-## Source contract
-
-- [Activation, step, and model](../packages/eve/src/tracing/agent-otel-provider.ts).
-- [Activation metadata](../packages/eve/src/tracing/eve/metadata.ts).
-- [Action](../packages/eve/src/tracing/agent-action-instrumentation.ts).
-- [Tool execution](../packages/eve/src/tracing/agent-tool-instrumentation.ts).
-- [Approval](../packages/eve/src/tracing/agent-approval-instrumentation.ts).
-- [Memory](../packages/eve/src/tracing/agent-memory-instrumentation.ts).
-- [Request](../packages/eve/src/internal/nitro/routes/channel-request-instrumentation.ts).
-- [MCP](../packages/eve/src/runtime/connections/mcp-tracing.ts).
-- [Content classification](../packages/eve/src/tracing/content-attributes.ts).
-- [Vercel export](../packages/eve/src/tracing/vercel-runtime-span-exporter.ts).
+Run focused unit and integration tests, typecheck, lint, invariants, and docs
+checks. Installed-pipeline e2e and live Agent Runs export require CI/platform
+validation.
