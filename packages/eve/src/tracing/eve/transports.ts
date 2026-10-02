@@ -2,7 +2,7 @@ import { trace, type Tracer } from "#compiled/@opentelemetry/api/index.js";
 import { liveOtelBackend } from "#tracing/lib/adapters/otel.js";
 import { eveOutputMapping } from "#tracing/eve/profile.js";
 import { createTransportLifecycle } from "#tracing/lib/core/transports.js";
-import { eveContentSerializer } from "#tracing/eve/serializer.js";
+import { aiSdkContentSerializer } from "#tracing/lib/adapters/serialization.js";
 import { createMcpTracing } from "#tracing/lib/adapters/mcp.js";
 
 const lifecycles = new WeakMap<Tracer, ReturnType<typeof createTransportLifecycle>>();
@@ -24,7 +24,7 @@ export function eveTransportLifecycle(scope: string) {
   if (lifecycle === undefined) {
     lifecycle = createTransportLifecycle(
       liveOtelBackend(tracer, eveOutputMapping()),
-      eveContentSerializer,
+      aiSdkContentSerializer,
     );
     lifecycles.set(tracer, lifecycle);
   }

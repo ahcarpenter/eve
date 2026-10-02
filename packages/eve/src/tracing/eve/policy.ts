@@ -7,7 +7,7 @@ import type {
   InstrumentationAttemptScope,
 } from "#instrumentation/lifecycle.js";
 import type { AgentTraceStateStore } from "#tracing/agent-trace-state.js";
-import { isSampledTrace, resolveTracePolicyDecision } from "#tracing/sampled-trace.js";
+import { isSampledTrace, resolveTracePolicyDecision } from "#shared/trace-policy.js";
 import {
   applyLiveDeliveryAudienceCeiling,
   resolveForwardedTraceSeed,

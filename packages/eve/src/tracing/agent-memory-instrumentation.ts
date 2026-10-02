@@ -16,7 +16,7 @@ import {
 } from "#shared/forwarded-trace-policy.js";
 import type { AgentTraceStateStore } from "#tracing/agent-trace-state.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
-import { isSampledTrace } from "#tracing/sampled-trace.js";
+import { isSampledTrace } from "#shared/trace-policy.js";
 import type { ConversationEnvironment } from "#shared/conversation-context.js";
 import { eveScopeRecord } from "#tracing/eve/checkpoint-codec.js";
 import type { MemoryOperation } from "#tracing/lib/core/operations.js";

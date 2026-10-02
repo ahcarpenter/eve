@@ -33,10 +33,15 @@ import {
 import { bindInstrumentationRuntime } from "#instrumentation/runtime.js";
 import { createAgentOtelInstrumentation } from "#tracing/agent-otel-provider.js";
 import { AgentSpanIdGenerator } from "#tracing/lib/adapters/otel-ids.js";
+import { createTraceRecorder } from "#tracing/lib/core/recorder.js";
+import { durableOtelBackend } from "#tracing/lib/adapters/otel.js";
+import { aiSdkContentSerializer } from "#tracing/lib/adapters/serialization.js";
+import { eveOutputMapping } from "#tracing/eve/profile.js";
 import { ContextAgentTraceStateStore } from "#tracing/agent-trace-context-store.js";
 import { AGENT_TRACE_CONTEXT_KEY } from "#tracing/agent-trace-context-codec.js";
 import { resolveToolCallAgentTrace } from "#tracing/agent-invocation-coordinator.js";
 import * as instrumentation from "#instrumentation/runtime.js";
+import * as runtimeGlobal from "#instrumentation/runtime-global.js";
 import {
   assembleLocalTrace,
   isAgentTurnSpan,
@@ -77,6 +82,16 @@ function createRuntime() {
     recordOutputs: true,
     stateStore: new ContextAgentTraceStateStore(),
     tracer: provider.getTracer("eve.agent"),
+    tracing: createTraceRecorder({
+      output: durableOtelBackend({
+        tracer: provider.getTracer("eve.agent"),
+        idGenerator,
+        samplesTrace: () => true,
+        mapping: eveOutputMapping(),
+      }),
+      serializer: aiSdkContentSerializer,
+      mode: "live",
+    }),
   });
   const hooks = createInstrumentationHooks([agent.hook]);
   return {
@@ -742,7 +757,7 @@ describe("exported agent telemetry contract", () => {
       const runtime = createRuntime();
       const hooks = runtime.hooks.forTrace!(traceContext("child", "public"));
       const registered = vi
-        .spyOn(instrumentation, "getInstrumentationRuntime")
+        .spyOn(runtimeGlobal, "getInstrumentationRuntime")
         .mockReturnValue(runtime);
       let ctx = contextFor("public");
       ctx.set(ParentTraceContextKey, {

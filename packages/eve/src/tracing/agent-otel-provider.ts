@@ -18,7 +18,7 @@ import { createAgentMemoryInstrumentation } from "#tracing/agent-memory-instrume
 import { readGatewayCostData } from "#tracing/lib/adapters/gateway.js";
 import { createEveSessionTracing } from "#tracing/eve/session.js";
 import type { TraceCapturePolicy } from "#tracing/otel-declaration.js";
-import { isSampledTrace } from "#tracing/sampled-trace.js";
+import { isSampledTrace } from "#shared/trace-policy.js";
 import { createEveCapturePolicy } from "#tracing/eve/policy.js";
 import { withChannelAudience } from "#tracing/channel-audience-context.js";
 import type {
@@ -36,10 +36,9 @@ import type {
   InstrumentationTurnStartedEvent,
 } from "#instrumentation/lifecycle.js";
 import { attemptIdempotencyKey } from "#instrumentation/lifecycle.js";
-import { type AgentSamplingOperation } from "#tracing/agent-span-contract.js";
+import type { SamplingOperation as AgentSamplingOperation } from "#tracing/lib/adapters/otel-registration.js";
 import { resolveInstrumentationEnvironment } from "#internal/application/dev-environment.js";
 import type { ConversationEnvironment } from "#shared/conversation-context.js";
-import { createEveTraceLifecycle } from "#tracing/eve/scopes.js";
 import { eveScopeRecord } from "#tracing/eve/checkpoint-codec.js";
 import type { AttemptOperation, ModelOperation } from "#tracing/lib/core/operations.js";
 import type { createTraceRecorder } from "#tracing/lib/core/recorder.js";
@@ -49,7 +48,7 @@ import { isObject } from "#shared/guards.js";
 type SpanState<T = AttemptOperation> = { readonly runtime: T; readonly context: Context };
 
 export interface AgentOtelInstrumentationInput {
-  readonly tracing?: ReturnType<typeof createTraceRecorder>;
+  readonly tracing: ReturnType<typeof createTraceRecorder>;
   readonly environment?: ConversationEnvironment;
   /** Whether any destination records model and tool inputs. */
   readonly recordInputs?: boolean;
@@ -82,7 +81,7 @@ export function createAgentOtelInstrumentation(
   const environment = input.environment ?? resolveInstrumentationEnvironment();
   const recordInputs = input.recordInputs ?? false;
   const recordOutputs = input.recordOutputs ?? false;
-  const lifecycle = input.tracing ?? createEveTraceLifecycle(input);
+  const lifecycle = input.tracing;
   const attemptScopes = new Map<string, InstrumentationAttemptScope>();
   // A lost serverless worker retries the whole turn step from entry.
   const steps = new WeakMap<InstrumentationAttemptScope, SpanState>();
