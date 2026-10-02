@@ -126,10 +126,15 @@ export function createTraceRecorder(input: {
       metadata: TurnMetadata;
       capture: CaptureDecision;
       binding: RuntimeBinding;
-    }): Promise<TurnOperation> {
-      return operationHandle(
-        await runtime.turn(input.identity, input.metadata, input.capture, input.binding),
-      ) as TurnOperation;
+    }): Promise<TurnOperation | undefined> {
+      try {
+        return operationHandle(
+          await runtime.turn(input.identity, input.metadata, input.capture, input.binding),
+        ) as TurnOperation;
+      } catch {
+        report();
+        return undefined;
+      }
     },
     async restore(
       snapshot: unknown,

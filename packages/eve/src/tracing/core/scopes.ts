@@ -385,14 +385,20 @@ export function createTraceLifecycle(input: {
           actualData.type === "activation" && result.usage === undefined
             ? { ...result, usage: { inputTokens: totalInput, outputTokens: totalOutput } }
             : result;
-        completeScope(
-          operation,
-          actualData,
-          terminal,
-          actualCapture,
-          startTimeMs,
-          input.serializer,
-        );
+        try {
+          completeScope(
+            operation,
+            actualData,
+            terminal,
+            actualCapture,
+            startTimeMs,
+            input.serializer,
+          );
+        } catch {
+          try {
+            input.diagnostic?.("agent.tracing.completion.failed");
+          } catch {}
+        }
         if (pendingError !== undefined) operation.fail(pendingError.error, pendingError.errorType);
         applyAttributes(operation, enrichment);
         if (actualData.type === "model" && result.model !== undefined)

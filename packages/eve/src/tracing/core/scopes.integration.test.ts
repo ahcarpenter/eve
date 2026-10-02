@@ -50,7 +50,7 @@ describe("constructed agent trace scopes", () => {
       });
       const payload = { value: "before" };
       const action = await (
-        await turn.attempt({ index: 0 }, "attempt")
+        await turn!.attempt({ index: 0 }, "attempt")
       ).action({ callId: "call", name: "lookup", arguments: payload }, "action");
       const snapshot = action.snapshot();
       payload.value = "after";
@@ -63,6 +63,17 @@ describe("constructed agent trace scopes", () => {
       });
       expect(JSON.stringify(restored?.snapshot())).not.toContain("before");
       expect(restored?.reference).toEqual(action.reference);
+      expect(restored?.snapshot().startTimeMs).toBe(snapshot.startTimeMs);
+      const oversized = await (
+        await turn!.attempt({ index: 1 }, "large-attempt")
+      ).action(
+        { callId: "large", name: "lookup", arguments: { text: "x".repeat(100000) } },
+        "large-action",
+      );
+      expect(
+        new TextEncoder().encode(JSON.stringify(oversized.snapshot())).length,
+      ).toBeLessThanOrEqual(65536);
+      expect(JSON.stringify(oversized.snapshot())).not.toContain("x".repeat(100));
       await action.run(async () => undefined, {
         emit: true,
         recordInputs: false,
@@ -101,6 +112,15 @@ describe("constructed agent trace scopes", () => {
           ),
       );
       expect(result).toBe("original");
+      const error = new TypeError("original error");
+      await expect(
+        tracing.turn(
+          { conversationId: "c", runId: "r", turnId: "failed", sequence: 0 },
+          async () => {
+            throw error;
+          },
+        ),
+      ).rejects.toBe(error);
     } finally {
       await provider.shutdown();
     }
@@ -154,11 +174,40 @@ describe("constructed agent trace scopes", () => {
         binding: { key: "typed" },
       });
       const model = await (
-        await turn.attempt({ index: 0 }, "attempt")
+        await turn!.attempt({ index: 0 }, "attempt")
       ).modelCall({ provider: "provider", modelId: "model" }, "model");
       expect("approval" in model || "toolExecution" in model).toBe(false);
       await model.complete({ outcome: "completed", result: { finishReason: "stop", usage: {} } });
-      await turn.complete({ outcome: "completed" });
+      await turn!.complete({ outcome: "completed" });
+    } finally {
+      await provider.shutdown();
+    }
+  });
+  it("runs callbacks exactly once under suppression when context installation fails", async () => {
+    const provider = new BasicTracerProvider();
+    try {
+      const output = liveOtelBackend(provider.getTracer("context-failure"));
+      let executions = 0;
+      let suppressions = 0;
+      output.run = () => {
+        throw new Error("context installation");
+      };
+      output.suppressed = (execute) => {
+        suppressions++;
+        return execute();
+      };
+      const tracing = createAiSdkTracing({ output });
+      expect(
+        await tracing.turn(
+          { conversationId: "c", runId: "r", turnId: "t", sequence: 0 },
+          async () => {
+            executions++;
+            return "original";
+          },
+        ),
+      ).toBe("original");
+      expect(executions).toBe(1);
+      expect(suppressions).toBe(1);
     } finally {
       await provider.shutdown();
     }

@@ -9,6 +9,7 @@ import type {
 } from "#tracing/core/types.js";
 import { createTransportLifecycle } from "#tracing/core/transports.js";
 import { disabledTurn } from "#tracing/core/disabled.js";
+import { defaultContentSerializer } from "#tracing/core/default-serializer.js";
 
 export interface TracingAdapter<TMcp = unknown> {
   readonly backend: TraceBackend;
@@ -134,13 +135,12 @@ export function createAgentTracing(input: {
   readonly agentName?: string;
   readonly framework?: FrameworkIdentity;
   readonly output: TraceBackend;
-  readonly serializer: ContentSerializer;
   readonly content?: { readonly recordInputs: boolean; readonly recordOutputs: boolean };
   readonly diagnostic?: (code: string) => void;
 }) {
   const recorder = createTracingRuntime({
     ...input,
-    adapter: { backend: input.output, serializer: input.serializer },
+    adapter: { backend: input.output, serializer: defaultContentSerializer },
   });
   return { turn: recorder.turn };
 }

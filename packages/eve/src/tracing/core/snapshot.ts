@@ -35,7 +35,7 @@ export function validSnapshot(value: unknown, requireVersion = true): value is S
       ].every((v) => typeof v === "string")
     )
       return false;
-    const options = record.data.options as unknown as Record<string, unknown>;
+    const options = record.data.options as Record<string, unknown>;
     switch (record.data.type) {
       case "activation":
         if (!Number.isSafeInteger(options.sequence)) return false;
